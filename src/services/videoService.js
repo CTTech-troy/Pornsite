@@ -31,16 +31,9 @@ export async function searchVideos({ q = '', page = 1 } = {}) {
 }
 
 export async function getTrending(page = 1) {
-  const url = `${API_BASE}/videos/trending?page=${encodeURIComponent(page)}`;
-  try {
-    const { status, body } = await fetchJson(url);
-    if (status >= 400) throw new Error('Trending returned status ' + status);
-    const dataPart = body && (body.data || body.results || body.videos || body.items || body);
-    return Array.isArray(dataPart) ? dataPart : [];
-  } catch (err) {
-    console.error('videoService.getTrending error', err);
-    throw err;
-  }
+  // Trending endpoints removed from backend; return empty fallback to avoid 404s.
+  console.debug('videoService.getTrending: backend trending endpoints removed, returning empty list');
+  return [];
 }
 
 export async function downloadVideo(videoLink) {
@@ -55,8 +48,22 @@ export async function downloadVideo(videoLink) {
   }
 }
 
+export async function getVideoById(videoId) {
+  const url = `${API_BASE}/videos/video/${encodeURIComponent(videoId)}`;
+  try {
+    const { status, body } = await fetchJson(url);
+    if (status >= 400) throw new Error('Get video by ID failed ' + status);
+    // Extract from response object that has { ok: true, data: {...} } or just return the full body
+    return body && body.data ? body.data : body;
+  } catch (err) {
+    console.error('videoService.getVideoById error', err);
+    throw err;
+  }
+}
+
 export default {
   searchVideos,
   getTrending,
   downloadVideo,
+  getVideoById,
 };

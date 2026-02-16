@@ -132,7 +132,7 @@ export default function Dashboard({
             </div>
 
             <div className="md:col-span-3 flex items-center justify-center md:justify-end">
-              {creatorStatus === 'approved' ? (
+              {/* {creatorStatus === 'approved' ? (
                 <div className="flex flex-col gap-3 w-full md:w-auto">
                   <button onClick={onUpload} className="w-full md:w-auto bg-[#1A1A2E] text-white font-bold px-6 py-3 rounded-xl hover:bg-black transition-colors flex items-center gap-2 justify-center">
                     <UploadIcon className="w-5 h-5" /> Upload
@@ -143,7 +143,7 @@ export default function Dashboard({
                 </div>
               ) : (
                 <button onClick={onApplyCreator} className="w-full md:w-auto bg-gradient-to-r from-[#FF4654] to-[#FF7043] text-white font-bold px-6 py-3 rounded-xl hover:scale-[1.02] transition-transform">Apply Now</button>
-              )}
+              )} */}
             </div>
           </div>
         </div>
@@ -197,19 +197,30 @@ export default function Dashboard({
               </div>
             </div>
           </div>
-        ) : (
-          <div className="mb-10">
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-bold text-gray-500">Creator metrics</p>
-                <p className="text-sm text-gray-600">Apply to become a verified creator to see detailed stats (videos, views, likes, earnings).</p>
-              </div>
-              <div>
-                <button onClick={onApplyCreator} className="bg-gradient-to-r from-[#FF4654] to-[#FF7043] text-white font-bold px-4 py-2 rounded">Apply Now</button>
-              </div>
-            </div>
-          </div>
-        )}
+        ) : <div className="mb-10">
+  <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row items-center justify-between gap-4">
+    
+    {/* Text Section */}
+    <div className="flex-1">
+      <p className="text-sm font-bold text-gray-500">Creator metrics</p>
+      <p className="text-sm text-gray-600 mt-1">
+        Apply to become a verified creator to see detailed stats (videos, views, likes, earnings).
+      </p>
+    </div>
+
+    {/* Button Section */}
+    <div className="flex-shrink-0">
+      <button 
+        onClick={onApplyCreator} 
+        className="bg-gradient-to-r from-[#FF4654] to-[#FF7043] text-white font-bold px-6 py-3 rounded whitespace-nowrap text-center md:px-8 md:py-4 lg:px-10 lg:py-4"
+      >
+        Apply Now
+      </button>
+    </div>
+
+  </div>
+</div>
+}
 
         {/* Creator Status Section */}
         <div className="mb-10">
@@ -217,33 +228,27 @@ export default function Dashboard({
             Creator Status
           </h2>
 
-          {creatorStatus === 'none' &&
-          <div className="bg-gradient-to-br from-white to-gray-50 rounded-3xl p-8 border border-gray-200 shadow-sm relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-[#FF4654]/10 to-[#FF7043]/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-              <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
-                <div className="flex items-center gap-6">
-                  <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-md">
-                    <Star className="w-8 h-8 text-[#FF4654] fill-[#FF4654]" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-[#1A1A2E] mb-2">
-                      Become a Creator
-                    </h3>
-                    <p className="text-gray-600 max-w-md">
-                      Apply to become a verified creator to upload videos, go
-                      live, and earn money from your content.
-                    </p>
-                  </div>
-                </div>
-                <button
-                onClick={onApplyCreator}
-                className="bg-gradient-to-r from-[#FF4654] to-[#FF7043] text-white font-bold px-8 py-3 rounded-xl shadow-lg shadow-red-200/50 hover:shadow-xl hover:scale-105 transition-all">
+         {creatorStatus === 'none' &&
+  <div className="bg-gradient-to-br from-white to-gray-50 rounded-3xl p-8 border border-gray-200 shadow-sm relative overflow-hidden">
+    <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-[#FF4654]/10 to-[#FF7043]/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+    <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
+      <div className="flex items-center gap-6">
+        <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-md">
+          <Star className="w-8 h-8 text-[#FF4654] fill-[#FF4654]" />
+        </div>
+        <div>
+          <h3 className="text-xl font-black text-[#1A1A2E] mb-2">
+            Not Verified
+          </h3>
+          <p className="text-gray-600 max-w-md">
+            You are currently not a verified creator. Verified creators can upload videos, go live, and earn from their content. To apply, please refer to our creator guidelines and terms.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+}
 
-                  Apply Now
-                </button>
-              </div>
-            </div>
-          }
 
           {creatorStatus === 'pending' &&
           <div className="bg-amber-50 rounded-3xl p-8 border border-amber-100 shadow-sm">
