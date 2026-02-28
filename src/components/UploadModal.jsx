@@ -2,78 +2,58 @@ import React, { useState } from 'react';
 import {
   X,
   Upload,
-  Clock,
   Type,
-  Image as ImageIcon,
   FileText,
   ShieldCheck,
-  Link,
-  CheckCircle2 } from
-'lucide-react';
+  Video,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const GRADIENT_OPTIONS = [
-{
-  name: 'Sunset',
-  value: 'bg-gradient-to-br from-orange-400 to-red-500'
-},
-{
-  name: 'Ocean',
-  value: 'bg-gradient-to-br from-blue-400 to-indigo-600'
-},
-{
-  name: 'Forest',
-  value: 'bg-gradient-to-br from-green-400 to-emerald-600'
-},
-{
-  name: 'Berry',
-  value: 'bg-gradient-to-br from-purple-500 to-pink-600'
-},
-{
-  name: 'Midnight',
-  value: 'bg-gradient-to-br from-slate-600 to-slate-800'
-},
-{
-  name: 'Gold',
-  value: 'bg-gradient-to-br from-yellow-300 to-orange-400'
-}];
+const CONSENT_QUESTION = 'Do you confirm you have permission to post this video?';
 
 export default function UploadModal({ isOpen, onClose, onUpload }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [duration, setDuration] = useState('');
-  const [selectedGradient, setSelectedGradient] = useState(
-    GRADIENT_OPTIONS[0].value
-  );
-  const [thumbnailUrl, setThumbnailUrl] = useState('');
-  const [consentOwnership, setConsentOwnership] = useState(false);
-  const [consentGuidelines, setConsentGuidelines] = useState(false);
+  const [videoFile, setVideoFile] = useState(null);
+  const [consentGiven, setConsentGiven] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const canSubmit = title && consentOwnership && consentGuidelines;
-  const handleSubmit = (e) => {
+  const [error, setError] = useState('');
+
+  const canSubmit = title.trim() && description.trim() && videoFile && !isLoading;
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!canSubmit) return;
+    setError('');
     setIsLoading(true);
-    setTimeout(() => {
-      onUpload({
-        title,
-        description,
-        duration: duration || '10:00',
-        thumbnailColor: selectedGradient,
-        thumbnailUrl: thumbnailUrl || undefined
+    try {
+      const result = await onUpload({
+        title: title.trim(),
+        description: description.trim(),
+        file: videoFile,
+        consentGiven,
       });
+      if (result && result.success) {
+        resetForm();
+        onClose();
+      } else {
+        setError(result?.message || 'Upload failed');
+      }
+    } catch (err) {
+      setError(err?.message || 'Upload failed');
+    } finally {
       setIsLoading(false);
-      onClose();
-      // Reset form
-      setTitle('');
-      setDescription('');
-      setDuration('');
-      setSelectedGradient(GRADIENT_OPTIONS[0].value);
-      setThumbnailUrl('');
-      setConsentOwnership(false);
-      setConsentGuidelines(false);
-    }, 1500);
+    }
   };
+
+  const resetForm = () => {
+    setTitle('');
+    setDescription('');
+    setVideoFile(null);
+    setConsentGiven(null);
+    setError('');
+  };
+  const handleClose = () => { resetForm(); onClose(); };
   if (!isOpen) return null;
   return (
     <AnimatePresence>
@@ -90,7 +70,7 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
             opacity: 0
           }}
           className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-          onClick={onClose} />
+          onClick={handleClose} />
 
 
           <motion.div
@@ -156,148 +136,89 @@ export default function UploadModal({ isOpen, onClose, onUpload }) {
               {/* Description */}
               <div className="space-y-2">
                 <label className="text-sm font-bold text-gray-700">
-                  Description
+                  Description *
                 </label>
                 <div className="relative">
                   <FileText className="absolute left-4 top-4 w-5 h-5 text-gray-400" />
                   <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Tell viewers what your video is about..."
-                  maxLength={500}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-12 pr-4 h-24 resize-none focus:outline-none focus:ring-2 focus:ring-[#FF4654] focus:border-transparent transition-all" />
-
+                    required
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Tell viewers what your video is about..."
+                    maxLength={500}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-12 pr-4 h-24 resize-none focus:outline-none focus:ring-2 focus:ring-[#FF4654] focus:border-transparent transition-all"
+                  />
                   <span className="absolute bottom-2 right-3 text-xs text-gray-400">
                     {description.length}/500
                   </span>
                 </div>
               </div>
 
-              {/* Duration */}
+              {/* Video File */}
               <div className="space-y-2">
                 <label className="text-sm font-bold text-gray-700">
-                  Duration
+                  Video File *
                 </label>
                 <div className="relative">
-                  <Clock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                   <input
-                  type="text"
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value)}
-                  placeholder="e.g., 12:45"
-                  className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-[#FF4654] focus:border-transparent transition-all" />
-
+                    type="file"
+                    accept="video/*"
+                    required
+                    onChange={(e) => setVideoFile(e.target.files?.[0] || null)}
+                    className="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-[#FF4654]/10 file:text-[#FF4654] file:font-bold hover:file:bg-[#FF4654]/20"
+                  />
+                  {videoFile && (
+                    <p className="mt-1 text-xs text-gray-500 flex items-center gap-1">
+                      <Video className="w-3.5 h-3.5" />
+                      {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(2)} MB)
+                    </p>
+                  )}
                 </div>
               </div>
 
-              {/* Thumbnail Section */}
-              <div className="space-y-3">
-                <label className="text-sm font-bold text-gray-700">
-                  Thumbnail
-                </label>
-
-                {/* Custom Thumbnail URL (optional) */}
-                <div className="space-y-2">
-                  <p className="text-xs text-gray-500">
-                    Add a custom thumbnail URL (optional)
-                  </p>
-                  <div className="relative">
-                    <Link className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <input
-                    type="url"
-                    value={thumbnailUrl}
-                    onChange={(e) => setThumbnailUrl(e.target.value)}
-                    placeholder="https://example.com/thumbnail.jpg"
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-[#FF4654] focus:border-transparent transition-all" />
-
-                  </div>
-                </div>
-
-                {/* Or pick a style */}
-                <p className="text-xs text-gray-500">
-                  Or choose a thumbnail style
-                </p>
-                <div className="grid grid-cols-6 gap-2">
-                  {GRADIENT_OPTIONS.map((opt) =>
-                <button
-                  key={opt.name}
-                  type="button"
-                  onClick={() => setSelectedGradient(opt.value)}
-                  className={`aspect-square rounded-xl ${opt.value} transition-all ${selectedGradient === opt.value ? 'ring-2 ring-[#FF4654] ring-offset-2 scale-110' : 'hover:scale-105 opacity-70'}`}
-                  title={opt.name} />
-
-                )}
-                </div>
-              </div>
-
-              {/* Preview */}
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-gray-700">
-                  Preview
-                </label>
-                <div
-                className={`aspect-video rounded-2xl overflow-hidden relative ${thumbnailUrl ? 'bg-gray-900' : selectedGradient} flex items-center justify-center shadow-inner`}>
-
-                  {thumbnailUrl ?
-                <img
-                  src={thumbnailUrl}
-                  alt="Thumbnail preview"
-                  className="w-full h-full object-cover"
-                  onError={(e) => {
-                    ;(e).style.display = 'none';
-                  }} /> :
-
-                null}
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-14 h-14 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center">
-                      <div className="w-0 h-0 border-t-[10px] border-t-transparent border-l-[18px] border-l-white border-b-[10px] border-b-transparent ml-1"></div>
-                    </div>
-                  </div>
-                  {title &&
-                <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent">
-                      <p className="text-white text-sm font-bold truncate">
-                        {title}
-                      </p>
-                    </div>
-                }
-                </div>
-              </div>
-
-              {/* Consent Section */}
+              {/* Mandatory Consent */}
               <div className="bg-gray-50 rounded-2xl p-4 space-y-3 border border-gray-100">
                 <div className="flex items-center gap-2 mb-1">
                   <ShieldCheck className="w-5 h-5 text-[#FF4654]" />
                   <span className="text-sm font-bold text-[#1A1A2E]">
-                    Creator Consent
+                    Mandatory consent
                   </span>
                 </div>
-
-                <label className="flex items-start gap-3 cursor-pointer group">
-                  <input
-                  type="checkbox"
-                  checked={consentOwnership}
-                  onChange={(e) => setConsentOwnership(e.target.checked)}
-                  className="w-5 h-5 rounded border-gray-300 text-[#FF4654] focus:ring-[#FF4654] cursor-pointer mt-0.5 flex-shrink-0" />
-
-                  <span className="text-sm text-gray-600 group-hover:text-gray-900 transition-colors leading-tight">
-                    I confirm that I own or have rights to this content and
-                    authorize letstream to distribute it on the platform.
-                  </span>
-                </label>
-
-                <label className="flex items-start gap-3 cursor-pointer group">
-                  <input
-                  type="checkbox"
-                  checked={consentGuidelines}
-                  onChange={(e) => setConsentGuidelines(e.target.checked)}
-                  className="w-5 h-5 rounded border-gray-300 text-[#FF4654] focus:ring-[#FF4654] cursor-pointer mt-0.5 flex-shrink-0" />
-
-                  <span className="text-sm text-gray-600 group-hover:text-gray-900 transition-colors leading-tight">
-                    I agree that this content follows letstream Community
-                    Guidelines and does not violate any laws.
-                  </span>
-                </label>
+                <p className="text-sm text-gray-700">{CONSENT_QUESTION}</p>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="consent"
+                      checked={consentGiven === true}
+                      onChange={() => setConsentGiven(true)}
+                      className="w-4 h-4 text-[#FF4654] focus:ring-[#FF4654]"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Yes</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="consent"
+                      checked={consentGiven === false}
+                      onChange={() => setConsentGiven(false)}
+                      className="w-4 h-4 text-[#FF4654] focus:ring-[#FF4654]"
+                    />
+                    <span className="text-sm font-medium text-gray-700">No (save as draft)</span>
+                  </label>
+                </div>
+                {consentGiven === false && (
+                  <p className="text-xs text-amber-600">
+                    Video will be saved as draft and will not appear in the public feed.
+                  </p>
+                )}
               </div>
+
+              {error && (
+                <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
 
               <button
               type="submit"

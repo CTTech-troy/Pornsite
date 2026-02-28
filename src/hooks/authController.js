@@ -31,8 +31,10 @@ export async function resendVerification(email) {
   return request('/api/auth/resend-verification', { body: { email }, method: 'POST' });
 }
 
-export async function applyCreator(uid, applicationData) {
-  return request('/api/auth/apply-creator', { body: { uid, applicationData }, method: 'POST' });
+export async function applyCreator(uid, applicationData, idToken) {
+  const headers = {};
+  if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
+  return request('/api/auth/apply-creator', { body: { uid, applicationData }, method: 'POST', headers });
 }
 
 export async function approveCreator(adminSecret, user_id, approve = true) {
@@ -49,6 +51,20 @@ export async function uploadMedia(formData) {
   return { ok: res.ok, status: res.status, body: json };
 }
 
+/** Secure video publish: Supabase Storage + RTDB. Requires idToken. FormData: video (file), title, description, consentGiven */
+export async function uploadVideoPublish(formData, idToken) {
+  const API_UPLOAD = `${API_URL.replace(/\/$/, '')}/api/videos/upload`;
+  const headers = {};
+  if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
+  const res = await fetch(API_UPLOAD, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  const json = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body: json };
+}
+
 export default {
   signupWithEmail,
   loginWithEmail,
@@ -57,4 +73,5 @@ export default {
   applyCreator,
   approveCreator,
   uploadMedia,
+  uploadVideoPublish,
 };

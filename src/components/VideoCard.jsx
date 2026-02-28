@@ -1,31 +1,62 @@
 // component/VideoCard.jsx
 import React, { useEffect, useRef, useState } from 'react';
-import { Heart, MessageCircle, Eye, Play, MoreVertical } from 'lucide-react';
+import { Heart, MessageCircle, Eye, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { isDirectStreamUrl } from '../utils/streamUrl';
+
+const FALLBACK_AVATAR = 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=60&crop=faces&bg=fff';
+const FALLBACK_THUMBNAIL = '/fallback.jpg';
+
+// Smart segments: first 5s, middle 5s, last 6s (duration in seconds)
+function getSmartSegments(durationSec) {
+  const d = Math.max(0, Number(durationSec) || 0);
+  if (d <= 0) return [{ start: 0, lengthMs: 5000 }];
+  const first = { start: 0, lengthMs: Math.min(5, d) * 1000 };
+  const midStart = Math.max(0, d / 2 - 2.5);
+  const mid = { start: midStart, lengthMs: Math.min(5000, (d - midStart) * 1000) };
+  const endStart = Math.max(0, d - 6);
+  const last = { start: endStart, lengthMs: Math.min(6000, (d - endStart) * 1000) };
+  return [first, mid, last].filter((s) => s.lengthMs > 200);
+}
 
 export default function VideoCard({
+  id: cardId,
   title,
   channel,
   views,
   time,
   thumbnail,
   duration,
+  durationSeconds,
   avatar,
   videoSrc,
   likes,
   comments,
-  onClick
+  onClick,
+  onHoverStart,
+  onHoverEnd,
+  activePreviewId,
 }) {
-  const FALLBACK_AVATAR = 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=60&crop=faces&bg=fff';
-  const FALLBACK_THUMBNAIL = '/fallback.jpg';
   const [isHovered, setIsHovered] = useState(false);
   const [previewStep, setPreviewStep] = useState(0);
   const [avatarSrc, setAvatarSrc] = useState(avatar || FALLBACK_AVATAR);
   const [thumbSrc, setThumbSrc] = useState(thumbnail || FALLBACK_THUMBNAIL);
+  const [isDesktop, setIsDesktop] = useState(true);
   const videoRef = useRef(null);
   const segmentTimeoutRef = useRef(null);
   const runningPreviewRef = useRef(false);
   const metadataLoadedRef = useRef(false);
+
+  const effectiveVideoSrc = videoSrc && isDirectStreamUrl(videoSrc) ? videoSrc : '';
+
+  useEffect(() => {
+    const mq = window.matchMedia('(hover: hover)');
+    setIsDesktop(mq.matches);
+    const handler = () => setIsDesktop(mq.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -34,12 +65,23 @@ export default function VideoCard({
     return () => v.removeEventListener('loadedmetadata', onLoaded);
   }, []);
 
-  // Play a short segment starting at `start` seconds and lasting `lengthMs` milliseconds
-  const playSegment = async (start, lengthMs = 500) => {
+  const isActivePreview = activePreviewId != null ? activePreviewId === cardId : true;
+  const shouldPreview = isDesktop && effectiveVideoSrc && isHovered && isActivePreview;
+
+  useEffect(() => {
+    if (!shouldPreview) {
+      runningPreviewRef.current = false;
+      clearTimeout(segmentTimeoutRef.current);
+      const v = videoRef.current;
+      try { if (v) { v.pause(); v.currentTime = 0; } } catch (e) {}
+      setPreviewStep(0);
+    }
+  }, [shouldPreview]);
+
+  const playSegment = async (start, lengthMs, onSegmentEnd) => {
     const v = videoRef.current;
-    if (!v) return;
+    if (!v || !runningPreviewRef.current) return;
     try {
-      // Seek reliably
       await new Promise((resolve) => {
         const handleSeeked = () => {
           v.removeEventListener('seeked', handleSeeked);
@@ -48,37 +90,33 @@ export default function VideoCard({
         v.addEventListener('seeked', handleSeeked);
         try { v.currentTime = Math.max(0, start); } catch (e) { resolve(); }
       });
-      // play
       await v.play();
-    } catch (e) {
-      // ignore playback errors
-    }
-    // stop after lengthMs
+    } catch (e) {}
     clearTimeout(segmentTimeoutRef.current);
     segmentTimeoutRef.current = setTimeout(() => {
-      try { v.pause(); } catch (e) {}
+      try { if (v) v.pause(); } catch (e) {}
+      onSegmentEnd?.();
     }, lengthMs);
   };
 
   const startPreviews = () => {
-    if (!videoSrc) return;
+    if (!effectiveVideoSrc || !isDesktop) return;
+    if (onHoverStart) onHoverStart();
     runningPreviewRef.current = true;
     setPreviewStep(0);
     const v = videoRef.current;
-    const duration = (v && v.duration && !Number.isNaN(v.duration)) ? v.duration : 0;
-    const starts = [0.5, Math.max(0.5, (duration / 2) - 0.25), Math.max(0.5, duration - 0.5)];
+    const durationSec = durationSeconds ?? (v?.duration && !Number.isNaN(v.duration) ? v.duration : 0);
+    const segments = getSmartSegments(durationSec);
     let step = 0;
-    const runStep = async () => {
-      if (!runningPreviewRef.current) return;
-      setPreviewStep(step);
-      await playSegment(starts[step] || 0.5, 500);
-      step = (step + 1) % 3;
-      if (runningPreviewRef.current) {
-        // small delay between segments for smoothness
-        segmentTimeoutRef.current = setTimeout(runStep, 80);
-      }
+    const runStep = () => {
+      if (!runningPreviewRef.current || segments.length === 0) return;
+      const seg = segments[step % segments.length];
+      setPreviewStep(step % segments.length);
+      step++;
+      playSegment(seg.start, seg.lengthMs, () => {
+        if (runningPreviewRef.current) setTimeout(runStep, 150);
+      });
     };
-    // ensure metadata loaded before running (if not, wait briefly)
     if (!metadataLoadedRef.current) {
       const check = setInterval(() => {
         if (metadataLoadedRef.current) {
@@ -86,11 +124,10 @@ export default function VideoCard({
           runStep();
         }
       }, 100);
-      // timeout fallback
-      setTimeout(() => { clearInterval(check); runStep(); }, 1500);
-    } else {
-      runStep();
+      const fallback = setTimeout(() => { clearInterval(check); runStep(); }, 2000);
+      return () => clearTimeout(fallback);
     }
+    runStep();
   };
 
   const stopPreviews = () => {
@@ -99,6 +136,16 @@ export default function VideoCard({
     const v = videoRef.current;
     try { if (v) { v.pause(); v.currentTime = 0; } } catch (e) {}
     setPreviewStep(0);
+    if (onHoverEnd) onHoverEnd();
+  };
+
+  const handleMouseEnter = () => {
+    setIsHovered(true);
+    if (isDesktop && videoSrc) startPreviews();
+  };
+  const handleMouseLeave = () => {
+    stopPreviews();
+    setIsHovered(false);
   };
 
   return (
@@ -129,36 +176,27 @@ export default function VideoCard({
         />
 
         {/* If a video source is provided, show a muted looping preview video */}
-        {videoSrc && (
+        {effectiveVideoSrc && (
           <video
             ref={videoRef}
-            src={videoSrc}
+            src={effectiveVideoSrc}
             muted
-            loop
             playsInline
+            preload="metadata"
             poster={thumbSrc}
-            className={`w-full h-full object-cover absolute inset-0 transition-opacity duration-300 ${isHovered ? 'opacity-100' : 'opacity-0'}`}
+            className={`w-full h-full object-cover absolute inset-0 transition-opacity duration-300 ${shouldPreview ? 'opacity-100' : 'opacity-0'}`}
           />
         )}
-        {/* Preview Overlay */}
+        {/* Preview overlay - desktop only when this card is active */}
         <AnimatePresence>
-          {isHovered &&
-          <motion.div
-            initial={{
-              opacity: 0
-            }}
-            animate={{
-              opacity: 1
-            }}
-            exit={{
-              opacity: 0
-            }}
-            className="absolute inset-0 transition-all duration-1000"
-            style={{
-              backdropFilter: `hue-rotate(${previewStep * 90}deg)`
-            }} />
-
-          }
+          {shouldPreview && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 pointer-events-none"
+            />
+          )}
         </AnimatePresence>
 
         {/* Play Button */}
@@ -173,8 +211,8 @@ export default function VideoCard({
           {duration}
         </div>
 
-        {/* Preview Progress Bar */}
-        {isHovered &&
+        {/* Preview progress - desktop only when this card is active */}
+        {shouldPreview && (
         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20">
             <motion.div
             className="h-full bg-[#FF4654]"
@@ -191,7 +229,7 @@ export default function VideoCard({
             }} />
 
           </div>
-        }
+        )}
       </div>
 
       {/* Content Info - tighter */}

@@ -26,6 +26,8 @@ export default function Dashboard({
   onLogout,
   onApplyCreator,
   onGoLive,
+  hasActiveLive,
+  activeLiveId,
   creatorStatus,
   onSimulateApproval
 }) {
@@ -305,11 +307,11 @@ export default function Dashboard({
                     Upload Video
                   </button>
                   <button
-                  onClick={onGoLive}
+                  onClick={() => onGoLive(hasActiveLive ? activeLiveId : undefined)}
                   className="bg-red-600 text-white font-bold px-6 py-3 rounded-xl hover:bg-red-700 transition-colors shadow-lg shadow-red-200 flex items-center gap-2">
 
                     <VideoIcon className="w-5 h-5" />
-                    Go Live
+                    {hasActiveLive ? 'View Live' : 'Go Live'}
                   </button>
                 </div>
               </div>

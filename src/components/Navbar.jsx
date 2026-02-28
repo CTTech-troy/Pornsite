@@ -8,11 +8,17 @@ export default function Navbar({
   onLoginClick,
   onSignUpClick,
   onDashboardClick,
+  onProfileClick,
   onUploadClick,
   onHomeClick,
   creatorStatus,
+  hasActiveLive,
   onSearch
 }) {
+  const handleProfileClick = () => {
+    if (onProfileClick) onProfileClick();
+    else if (onDashboardClick) onDashboardClick();
+  };
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -214,8 +220,8 @@ export default function Navbar({
         <div className="flex items-center gap-3 md:gap-4 flex-shrink-0">
           {isAuthenticated ?
           <button
-            onClick={onDashboardClick}
-            className="w-10 h-10 rounded-full bg-gray-200 overflow-hidden border-2 border-transparent hover:border-[#FF4654] transition-all">
+            onClick={handleProfileClick}
+            className="relative w-10 h-10 rounded-full bg-gray-200 overflow-hidden border-2 border-transparent hover:border-[#FF4654] transition-all">
 
               <img
               src={
@@ -224,6 +230,9 @@ export default function Navbar({
               }
               alt="Profile"
               className="w-full h-full object-cover" />
+              {hasActiveLive && (
+                <span className="absolute bottom-0 right-0 w-3 h-3 bg-red-600 border-2 border-white rounded-full" title="You are live" />
+              )}
 
             </button> :
 

@@ -1,23 +1,25 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import  Navbar  from '../components/Navbar';
 import  LiveNowSection  from '../components/LiveNowSection';
-import  VideoGrid  from '../components/VideoGrid';
+import VideoFeed from '../components/VideoFeed';
 import  Sidebar  from '../components/Sidebar';
 import  Dashboard  from '../components/Dashboard';
 import  AuthModal  from '../components/AuthModal';
 import  UploadModal  from '../components/UploadModal';
-import  VideoPage  from '../components/VideoPage';
 import  AdBanner  from '../components/AdBanner';
 import  PublicProfile  from '../components/PublicProfile';
 import  LiveStreamPage  from '../components/LiveStreamPage';
 import  CreatorApplicationModal  from '../components/CreatorApplicationModal';
 import CreatorApplicationPage from '../pages/CreatorApplicationPage';
 import  CreatorLiveStudio  from '../components/CreatorLiveStudio';
+import TopCreatorsSection from '../components/TopCreatorsSection';
 import { useAuth } from '../hooks/useAuth';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { getMyActiveLive } from '../api/liveApi';
+import { getCreators } from '../api/creatorsApi';
+import { useNavigate } from 'react-router-dom';
+import { getPathSafeVideoId } from '../utils/videoId';
 
-
-export default function App() {
+export default function MainPage() {
   const {
     user,
     isAuthenticated,
@@ -26,11 +28,11 @@ export default function App() {
     signup,
     logout,
     uploadVideo,
+    getIdToken,
     applyAsCreator,
     approveCreator
   } = useAuth();
   const [showDashboard, setShowDashboard] = useState(false);
-  const [currentVideo, setCurrentVideo] = useState(null);
   const [currentPublicProfile, setCurrentPublicProfile] = useState(null);
   const [currentLiveStream, setCurrentLiveStream] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -39,7 +41,43 @@ export default function App() {
   const [isCreatorModalOpen, setIsCreatorModalOpen] = useState(false);
   const [showCreatorPage, setShowCreatorPage] = useState(false);
   const [showLiveStudio, setShowLiveStudio] = useState(false);
+  const [initialLiveIdForStudio, setInitialLiveIdForStudio] = useState(null);
+  const [myActiveLive, setMyActiveLive] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [topCreators, setTopCreators] = useState([]);
+  const [creatorsLoading, setCreatorsLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    getCreators(100)
+      .then((list) => setTopCreators(Array.isArray(list) ? list : []))
+      .catch(() => setTopCreators([]))
+      .finally(() => setCreatorsLoading(false));
+  }, []);
+
+  const hasCreatorPrivileges = user?.creator === true || user?.creatorStatus === 'approved';
+  useEffect(() => {
+    if (!user?.uid || !hasCreatorPrivileges) {
+      setMyActiveLive(null);
+      return;
+    }
+    getMyActiveLive(user.uid).then((data) => setMyActiveLive(data || null)).catch(() => setMyActiveLive(null));
+  }, [user?.uid, hasCreatorPrivileges, showLiveStudio]);
+
+  const handleProfileClick = () => {
+    if (myActiveLive?.id) {
+      setInitialLiveIdForStudio(myActiveLive.id);
+      setShowLiveStudio(true);
+      setShowDashboard(false);
+      setCurrentLiveStream(null);
+      setCurrentPublicProfile(null);
+    } else {
+      setShowDashboard(true);
+      setShowLiveStudio(false);
+      setCurrentLiveStream(null);
+      setCurrentPublicProfile(null);
+    }
+  };
   const handleLoginClick = () => {
     setAuthModalTab('login');
     setIsAuthModalOpen(true);
@@ -50,14 +88,13 @@ export default function App() {
   };
   const handleDashboardClick = () => {
     setShowDashboard(true);
-    setCurrentVideo(null);
     setCurrentLiveStream(null);
     setCurrentPublicProfile(null);
     setShowLiveStudio(false);
   };
   const handleUploadClick = () => {
     if (isAuthenticated) {
-      if (user?.creatorStatus === 'approved') {
+      if (hasCreatorPrivileges) {
         setIsUploadModalOpen(true);
       } else {
         setIsCreatorModalOpen(true);
@@ -67,7 +104,8 @@ export default function App() {
     }
   };
   const handleVideoClick = (video) => {
-    setCurrentVideo(video);
+    const pathId = getPathSafeVideoId(video.id);
+    navigate(`/video/${pathId}`, { state: { video } });
     setCurrentLiveStream(null);
     setCurrentPublicProfile(null);
     setShowLiveStudio(false);
@@ -75,13 +113,11 @@ export default function App() {
   };
   const handleLiveStreamClick = (stream) => {
     setCurrentLiveStream(stream);
-    setCurrentVideo(null);
     setCurrentPublicProfile(null);
     setShowLiveStudio(false);
     window.scrollTo(0, 0);
   };
   const handleBackToFeed = () => {
-    setCurrentVideo(null);
     setCurrentPublicProfile(null);
     setCurrentLiveStream(null);
     setShowDashboard(false);
@@ -100,7 +136,6 @@ export default function App() {
       coverImage: creator.coverImage
     };
     setCurrentPublicProfile(profileData);
-    setCurrentVideo(null);
     setCurrentLiveStream(null);
     setShowLiveStudio(false);
     window.scrollTo(0, 0);
@@ -109,7 +144,8 @@ export default function App() {
     // Open the full-page Creator Application instead of modal
     setShowCreatorPage(true);
   };
-  const handleGoLive = () => {
+  const handleGoLive = (existingLiveId = null) => {
+    setInitialLiveIdForStudio(existingLiveId ?? null);
     setShowLiveStudio(true);
     setShowDashboard(false);
   };
@@ -127,7 +163,18 @@ export default function App() {
   };
   // Render Creator Live Studio if active
   if (showLiveStudio && user) {
-    return <CreatorLiveStudio user={user} onBack={handleBackToFeed} />;
+    return (
+      <CreatorLiveStudio
+        user={user}
+        onBack={() => {
+          setShowLiveStudio(false);
+          setInitialLiveIdForStudio(null);
+          setMyActiveLive(null);
+          getMyActiveLive(user?.uid).then((data) => setMyActiveLive(data || null)).catch(() => {});
+        }}
+        initialLiveId={initialLiveIdForStudio}
+      />
+    );
   }
   // Render the full-page Creator Application if requested
   if (showCreatorPage) {
@@ -150,9 +197,11 @@ export default function App() {
           onLoginClick={handleLoginClick}
           onSignUpClick={handleSignUpClick}
           onDashboardClick={handleDashboardClick}
+          onProfileClick={handleProfileClick}
           onUploadClick={handleUploadClick}
           onHomeClick={handleBackToFeed}
-          creatorStatus={user?.creatorStatus}
+          creatorStatus={hasCreatorPrivileges ? 'approved' : user?.creatorStatus}
+          hasActiveLive={!!myActiveLive?.id}
           onSearch={handleSearch} />
 
         {showDashboard && user ? (
@@ -164,38 +213,31 @@ export default function App() {
             onLogout={logout}
             onApplyCreator={handleApplyCreator}
             onGoLive={handleGoLive}
-            creatorStatus={user.creatorStatus}
+            hasActiveLive={!!myActiveLive?.id}
+            activeLiveId={myActiveLive?.id}
+            creatorStatus={hasCreatorPrivileges ? 'approved' : user.creatorStatus}
             onSimulateApproval={approveCreator} />
         ) : currentLiveStream ? (
-          <LiveStreamPage stream={currentLiveStream} onBack={handleBackToFeed} />
+          <LiveStreamPage stream={currentLiveStream} onBack={handleBackToFeed} userId={user?.uid} />
         ) : currentPublicProfile ? (
           <PublicProfile
             creator={currentPublicProfile}
             videos={uploadedVideos.length > 0 ? uploadedVideos : []}
             onBack={handleBackToFeed}
             onVideoClick={handleVideoClick} />
-        ) : currentVideo ? (
-          <VideoPage
-            video={currentVideo}
-            currentUser={user}
-            isAuthenticated={isAuthenticated}
-            onLoginClick={handleLoginClick}
-            onBack={handleBackToFeed}
-            onCreatorClick={handleCreatorClick}
-            onVideoClick={handleVideoClick} />
         ) : (
           <main className="max-w-7xl mx-auto px-4 pb-12">
+            {/* <TopCreatorsSection creators={topCreators} loading={creatorsLoading} /> */}
             <LiveNowSection onStreamClick={handleLiveStreamClick} />
 
             <AdBanner size="leaderboard" />
 
             <div className="flex flex-col lg:flex-row gap-8 mt-4">
-              <VideoGrid
-              userUploadedVideos={uploadedVideos}
-              onVideoClick={handleVideoClick}
-              searchQuery={searchQuery}
-              remoteApi="pornhub" />
-
+              <VideoFeed
+                userUploadedVideos={uploadedVideos}
+                onVideoClick={handleVideoClick}
+                searchQuery={searchQuery}
+              />
               <Sidebar onCreatorClick={handleCreatorClick} />
             </div>
           </main>

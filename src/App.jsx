@@ -1,16 +1,18 @@
 import React from 'react';
 import { Routes, Route } from 'react-router-dom';
-import Header from './components/Navbar';
 import MainPage from './pages/mainpage.jsx';
 import Leaderboard65 from './pages/Leaderboard65.jsx';
+import VideoDetailRoute from './pages/VideoDetailRoute.jsx';
+import CreatorPage from './pages/CreatorPage.jsx';
 
 export default function App() {
   return (
     <>
-      {/* <Header /> */}
       <Routes>
         <Route path="/" element={<MainPage />} />
+        <Route path="/video/:videoId" element={<VideoDetailRoute />} />
         <Route path="/leaderboard" element={<Leaderboard65 />} />
+        <Route path="/creator/:slug" element={<CreatorPage />} />
       </Routes>
     </>
   );

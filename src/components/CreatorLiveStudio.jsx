@@ -15,32 +15,18 @@ import {
   Play,
   X,
   Home,
-  Minimize2 } from
-'lucide-react';
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { createLive, getLive, getMyActiveLive } from '../api/liveApi';
+import { connectSocket, emit, on, off } from '../api/socket';
 
-const MOCK_COMMENTS = [
-'You look great today! 🔥',
-'Can you say hi to Brazil? 🇧🇷',
-'What game are you playing later?',
-'Love the setup!',
-'First time here, subscribed!',
-'Notice me senpai',
-'LOL 😂',
-'Sound is crisp 👌',
-'Wow, never knew that',
-'Keep it up!'];
+const COMMENT_COLORS = ['text-blue-400', 'text-green-400', 'text-purple-400', 'text-orange-400', 'text-pink-400'];
 
-const MOCK_VIEWERS = [
-'AlexGamer',
-'SarahVlogs',
-'Mike_Check',
-'JenYoga',
-'CoolDude99',
-'PixelArt'];
-
-// eslint-disable-next-line no-unused-vars
-export default function CreatorLiveStudio({ user, onBack }) {
+export default function CreatorLiveStudio({ user, onBack, initialLiveId }) {
+  const hostId = user?.uid || user?.id || '';
+  const displayName = user?.displayName || user?.name || user?.email || 'Creator';
+  const [liveId, setLiveId] = useState(null);
+  const [liveCreatedAt, setLiveCreatedAt] = useState(null);
   const [isLive, setIsLive] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [cameraEnabled, setCameraEnabled] = useState(true);
@@ -49,145 +35,202 @@ export default function CreatorLiveStudio({ user, onBack }) {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [viewers, setViewers] = useState(0);
   const [likes, setLikes] = useState(0);
-  const [gifts, setGifts] = useState(0);
   const [giftValue, setGiftValue] = useState(0);
   const [comments, setComments] = useState([]);
   const [giftNotification, setGiftNotification] = useState(null);
   const [showExitModal, setShowExitModal] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(true);
+  const [endPayout, setEndPayout] = useState(null);
+  const [goLiveError, setGoLiveError] = useState(null);
+  const [resumeLoading, setResumeLoading] = useState(!!initialLiveId);
   const chatRef = useRef(null);
   const mobileChatRef = useRef(null);
-  // Timer for live duration
-  useEffect(() => {
-    let interval;
-    if (isLive && !isPaused) {
-      interval = setInterval(() => {
-        setElapsedTime((prev) => prev + 1);
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isLive, isPaused]);
-  // Mock live interactions
-  useEffect(() => {
-    let interval;
-    if (isLive && !isPaused) {
-      interval = setInterval(() => {
-        setViewers((prev) => {
-          const change = Math.floor(Math.random() * 10) - 3;
-          return Math.max(0, prev + change);
-        });
-        if (Math.random() > 0.3) {
-          setLikes((prev) => prev + Math.floor(Math.random() * 5) + 1);
-        }
-        if (Math.random() > 0.5) {
-          const randomMsg =
-          MOCK_COMMENTS[Math.floor(Math.random() * MOCK_COMMENTS.length)];
-          const randomUser =
-          MOCK_VIEWERS[Math.floor(Math.random() * MOCK_VIEWERS.length)];
-          const colors = [
-          'text-blue-400',
-          'text-green-400',
-          'text-purple-400',
-          'text-orange-400',
-          'text-pink-400'];
+  const videoRef = useRef(null);
+  const videoRefDesktop = useRef(null);
+  const streamRef = useRef(null);
 
-          const randomColor = colors[Math.floor(Math.random() * colors.length)];
-          setComments((prev) => [
-          ...prev.slice(-30),
-          {
-            id: Date.now(),
-            user: randomUser,
-            text: randomMsg,
-            color: randomColor
-          }]
-          );
-        }
-        if (Math.random() > 0.9) {
-          const randomUser =
-          MOCK_VIEWERS[Math.floor(Math.random() * MOCK_VIEWERS.length)];
-          const giftTypes = [
-          {
-            name: 'Rose',
-            value: 1
-          },
-          {
-            name: 'Coffee',
-            value: 3
-          },
-          {
-            name: 'Super Heart',
-            value: 5
-          },
-          {
-            name: 'Diamond',
-            value: 10
-          }];
-
-          const gift = giftTypes[Math.floor(Math.random() * giftTypes.length)];
-          setGifts((prev) => prev + 1);
-          setGiftValue((prev) => prev + gift.value);
-          setGiftNotification({
-            user: randomUser,
-            gift: gift.name,
-            value: gift.value
-          });
-          setTimeout(() => setGiftNotification(null), 3000);
-        }
-      }, 2000);
+  // Resume existing live when initialLiveId is provided
+  useEffect(() => {
+    if (!initialLiveId || !hostId) {
+      setResumeLoading(false);
+      return;
     }
+    getLive(initialLiveId)
+      .then((live) => {
+        if (live && (live.status === 'live' || live.status === 'paused')) {
+          setLiveId(live.id);
+          setLiveCreatedAt(live.created_at || new Date().toISOString());
+          setViewers(live.viewers_count ?? 1);
+          setLikes(live.total_likes ?? 0);
+          setGiftValue(live.total_gifts_amount ?? 0);
+          setComments([]);
+          setIsLive(true);
+          setIsPaused(live.status === 'paused');
+          connectSocket();
+          emit('join-live', { liveId: live.id, userId: hostId });
+        }
+      })
+      .catch(() => setGoLiveError('Could not load your live session'))
+      .finally(() => setResumeLoading(false));
+  }, [initialLiveId, hostId]);
+
+  // Timer for live duration from live start
+  useEffect(() => {
+    if (!isLive || !liveCreatedAt) return;
+    const tick = () => {
+      const start = new Date(liveCreatedAt).getTime();
+      setElapsedTime(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [isLive, isPaused]);
+  }, [isLive, liveCreatedAt]);
+
+  // Socket listeners when we have a live session
+  useEffect(() => {
+    if (!liveId) return;
+    const unsubViewers = on('update-viewers', (payload) => setViewers(payload.viewersCount ?? 0));
+    const unsubLikes = on('update-likes', (payload) => setLikes(payload.totalLikes ?? 0));
+    const unsubComment = on('new-comment', (c) => {
+      const color = COMMENT_COLORS[Math.floor(Math.random() * COMMENT_COLORS.length)];
+      setComments((prev) => [...prev.slice(-50), { id: c.id || Date.now(), user: c.user_id || 'Viewer', text: c.message || '', color }]);
+    });
+    const unsubGift = on('new-gift', (payload) => {
+      const g = payload.gift;
+      const amount = g?.amount ?? 0;
+      setGiftValue(payload.totalGiftsAmount ?? 0);
+      setGiftNotification({
+        user: g?.sender_id || 'Viewer',
+        gift: g?.name || g?.gift_type || 'Gift',
+        value: amount,
+      });
+      setTimeout(() => setGiftNotification(null), 3000);
+    });
+    const unsubEnded = on('live-ended', (payout) => {
+      setEndPayout(payout);
+      setIsLive(false);
+      setIsPaused(false);
+      setLiveId(null);
+      setTimeout(() => {
+        setEndPayout(null);
+        onBack();
+      }, 2500);
+    });
+    const unsubPaused = on('live-paused', () => setShowExitModal(false));
+    const unsubResumed = on('live-resumed', () => setIsPaused(false));
+    return () => {
+      unsubViewers?.();
+      unsubLikes?.();
+      unsubComment?.();
+      unsubGift?.();
+      unsubEnded?.();
+      unsubPaused?.();
+      unsubResumed?.();
+    };
+  }, [liveId]);
+
   // Auto-scroll chat
   useEffect(() => {
-    if (chatRef.current) {
-      chatRef.current.scrollTop = chatRef.current.scrollHeight;
-    }
-    if (mobileChatRef.current) {
-      mobileChatRef.current.scrollTop = mobileChatRef.current.scrollHeight;
-    }
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    if (mobileChatRef.current) mobileChatRef.current.scrollTop = mobileChatRef.current.scrollHeight;
   }, [comments]);
+
   const formatTime = (seconds) => {
     const h = Math.floor(seconds / 3600);
-    const m = Math.floor(seconds % 3600 / 60);
+    const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
-  const handleGoLive = () => {
+
+  const handleGoLive = async () => {
     if (isLive) {
       setShowExitModal(true);
-    } else {
+      return;
+    }
+    if (!hostId) return;
+    setGoLiveError(null);
+    try {
+      const existing = await getMyActiveLive(hostId);
+      if (existing?.id) {
+        setGoLiveError('You already have an active live. End it before starting another.');
+        return;
+      }
+      const live = await createLive(hostId, displayName);
+      const id = live?.id;
+      const createdAt = live?.created_at;
+      if (!id) throw new Error('No live id returned');
+      setLiveId(id);
+      setLiveCreatedAt(createdAt || new Date().toISOString());
+      setViewers(1);
+      setLikes(0);
+      setGiftValue(0);
+      setComments([]);
       setIsLive(true);
       setIsPaused(false);
-      setViewers(120);
+      connectSocket();
+      emit('join-live', { liveId: id, userId: hostId });
+    } catch (err) {
+      setGoLiveError(err?.message || 'Go live failed');
     }
   };
+
   const handlePauseStream = () => {
+    if (liveId) emit('pause-live', { liveId });
     setIsPaused(true);
     setShowExitModal(false);
   };
+
   const handleResumeStream = () => {
+    if (liveId) emit('resume-live', { liveId });
     setIsPaused(false);
   };
+
   const handleEndStream = () => {
+    if (liveId) emit('end-live', { liveId });
     setIsLive(false);
     setIsPaused(false);
     setElapsedTime(0);
     setShowExitModal(false);
+    setLiveId(null);
     onBack();
   };
+
   const handleGoHome = () => {
-    // Pause the stream and go back to homepage
+    if (liveId) emit('pause-live', { liveId });
     setIsPaused(true);
     setShowExitModal(false);
     onBack();
   };
+
   const handleExitStudio = () => {
-    if (isLive) {
-      setShowExitModal(true);
-    } else {
-      onBack();
-    }
+    if (isLive) setShowExitModal(true);
+    else onBack();
   };
+
+  // Camera: getUserMedia and attach to video(s)
+  useEffect(() => {
+    if (!cameraEnabled) return;
+    const constraints = { video: { facingMode: frontCamera ? 'user' : 'environment' }, audio: micEnabled };
+    navigator.mediaDevices?.getUserMedia(constraints).then((stream) => {
+      streamRef.current = stream;
+      [videoRef.current, videoRefDesktop.current].forEach((el) => { if (el) el.srcObject = stream; });
+    }).catch((err) => console.warn('getUserMedia failed', err));
+    return () => {
+      streamRef.current?.getTracks?.().forEach((t) => t.stop());
+      streamRef.current = null;
+      [videoRef.current, videoRefDesktop.current].forEach((el) => { if (el) el.srcObject = null; });
+    };
+  }, [cameraEnabled, micEnabled, frontCamera]);
+
+  if (resumeLoading) {
+    return (
+      <div className="h-screen bg-[#0F1923] text-white flex flex-col items-center justify-center gap-4">
+        <p className="text-white/80">Loading your live session...</p>
+        <button onClick={onBack} className="text-sm text-[#FF4654] hover:underline">Cancel</button>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen bg-[#0F1923] text-white flex flex-col overflow-hidden">
       {/* Top Bar */}
@@ -228,28 +271,29 @@ export default function CreatorLiveStudio({ user, onBack }) {
         </div>
       </div>
 
+      {goLiveError && (
+        <div className="mx-4 mt-2 px-4 py-2 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm flex items-center justify-between gap-2">
+          <span>{goLiveError}</span>
+          <button type="button" onClick={() => setGoLiveError(null)} className="text-white/80 hover:text-white">×</button>
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {/* MOBILE LAYOUT: Full-screen camera with overlay chat */}
         <div className="lg:hidden h-full relative">
           {/* Full-screen Camera */}
           <div className="absolute inset-0 bg-black">
-            <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
-              {cameraEnabled ?
-              <div className="text-center opacity-30">
-                  <Camera className="w-20 h-20 mx-auto mb-3" />
-                  <p className="text-lg font-bold">Camera Preview</p>
-                  <p className="text-xs">
-                    {frontCamera ? 'Front' : 'Back'} Camera Active
-                  </p>
-                </div> :
-
-              <div className="text-center opacity-30">
+            {cameraEnabled ? (
+              <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
+                <div className="text-center opacity-30">
                   <VideoOff className="w-20 h-20 mx-auto mb-3" />
                   <p className="text-lg font-bold">Camera Off</p>
                 </div>
-              }
-            </div>
+              </div>
+            )}
 
             {/* Paused Overlay */}
             {isPaused &&
@@ -303,7 +347,7 @@ export default function CreatorLiveStudio({ user, onBack }) {
                 {likes}
               </div>
               <div className="bg-black/60 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
-                <Gift className="w-3 h-3 text-[#FF4654]" />${giftValue}
+                <Gift className="w-3 h-3 text-[#FF4654]" />₦{giftValue}
               </div>
             </div>
           </div>
@@ -330,7 +374,7 @@ export default function CreatorLiveStudio({ user, onBack }) {
                   <Gift className="w-3.5 h-3.5 text-white" />
                 </div>
                 <p className="text-xs font-bold text-white truncate">
-                  {giftNotification.user} sent {giftNotification.gift} ($
+                  {giftNotification.user} sent {giftNotification.gift} (₦
                   {giftNotification.value})
                 </p>
               </motion.div>
@@ -427,22 +471,16 @@ export default function CreatorLiveStudio({ user, onBack }) {
           <div className="lg:col-span-2 flex flex-col min-h-0">
             <div className="flex-1 bg-black rounded-2xl relative overflow-hidden border border-gray-800 shadow-2xl min-h-0">
               {/* Camera Feed */}
-              <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
-                {cameraEnabled ?
-                <div className="text-center opacity-30">
-                    <Camera className="w-24 h-24 mx-auto mb-4" />
-                    <p className="text-xl font-bold">Camera Preview</p>
-                    <p className="text-sm">
-                      {frontCamera ? 'Front Camera' : 'Back Camera'} Active
-                    </p>
-                  </div> :
-
-                <div className="text-center opacity-30">
+              {cameraEnabled ? (
+                <video ref={videoRefDesktop} autoPlay playsInline muted className="w-full h-full object-cover rounded-2xl" />
+              ) : (
+                <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
+                  <div className="text-center opacity-30">
                     <VideoOff className="w-24 h-24 mx-auto mb-4" />
                     <p className="text-xl font-bold">Camera Off</p>
                   </div>
-                }
-              </div>
+                </div>
+              )}
 
               {/* Paused Overlay - Desktop */}
               {isPaused &&
@@ -555,7 +593,7 @@ export default function CreatorLiveStudio({ user, onBack }) {
               <div className="bg-[#1A1A2E] p-2.5 rounded-xl border border-gray-800">
                 <p className="text-[10px] text-gray-400 mb-0.5">Gifts</p>
                 <p className="text-base font-bold text-white flex items-center gap-1">
-                  <Gift className="w-3.5 h-3.5 text-[#FF4654]" />${giftValue}
+                  <Gift className="w-3.5 h-3.5 text-[#FF4654]" />₦{giftValue}
                 </p>
               </div>
             </div>
@@ -595,7 +633,7 @@ export default function CreatorLiveStudio({ user, onBack }) {
                         New Gift!
                       </p>
                       <p className="text-xs font-bold text-white truncate">
-                        {giftNotification.user} sent {giftNotification.gift} ($
+                        {giftNotification.user} sent {giftNotification.gift} (₦
                         {giftNotification.value})
                       </p>
                     </div>
@@ -696,6 +734,23 @@ export default function CreatorLiveStudio({ user, onBack }) {
           </div>
         }
       </AnimatePresence>
-    </div>);
 
+      {/* Stream ended – earnings */}
+      <AnimatePresence>
+        {endPayout && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          >
+            <div className="bg-[#1A1A2E] rounded-2xl p-6 border border-gray-700 text-center">
+              <p className="text-white font-bold text-lg">Stream ended</p>
+              <p className="text-[#FF4654] font-black text-2xl mt-2">You earned ₦{endPayout.hostShare ?? 0}</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 }

@@ -46,19 +46,7 @@ export function CreatorApplicationModal({ isOpen = false, onClose = () => {}, on
   const [formData, setFormData] = useState(initialFormData)
   const [submitted, setSubmitted] = useState(false)
   const updateFormData = (partial) => {
-    setFormData((prev) => {
-      const next = {
-        ...prev,
-        ...partial,
-      }
-      try {
-        console.log('CreatorApplicationModal - form update:', partial)
-        console.log('CreatorApplicationModal - full form data:', next)
-      } catch (err) {
-        // ignore logging failures
-      }
-      return next
-    })
+    setFormData((prev) => ({ ...prev, ...partial }))
   }
   const goNext = () => {
     setCompletedSteps((prev) =>
@@ -67,24 +55,15 @@ export function CreatorApplicationModal({ isOpen = false, onClose = () => {}, on
     setCurrentStep((prev) => Math.min(prev + 1, 4))
   }
   const goBack = () => {
-    setCurrentStep((prev) => {
-      const next = Math.max(prev - 1, 0)
-      console.log(`CreatorApplicationModal - navigate back: from ${prev} to ${next}`)
-      return next
-    })
+    setCurrentStep((prev) => Math.max(prev - 1, 0))
   }
   const handleSubmit = () => {
     setCompletedSteps((prev) => (prev.includes(4) ? prev : [...prev, 4]))
     setSubmitted(true)
     try {
-      console.log('CreatorApplicationModal - final submission payload:', formData)
-    } catch (err) {
-      // ignore
-    }
-    try {
       onApply(formData)
     } catch (err) {
-      console.warn('onApply callback failed', err)
+      setSubmitted(false)
     }
   }
   if (!isOpen) return null

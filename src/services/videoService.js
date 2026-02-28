@@ -14,7 +14,30 @@ async function fetchJson(url, options = {}) {
   }
 }
 
-const API_BASE = (import.meta.env && import.meta.env.VITE_API_URL) ? String(import.meta.env.VITE_API_URL).replace(/\/$/, '') + '/api' : '/api';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
+
+/**
+ * Fetch videos paginated from backend.
+ * Returns an array of normalized video objects.
+ */
+export async function fetchVideos({ page = 1, limit = 10 } = {}) {
+  const offset = Math.max((page - 1) * limit, 0);
+  const url = `${API_BASE}/videos?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`;
+  try {
+    console.info('[videoService] fetchVideos -> url:', url);
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    console.info('[videoService] fetchVideos -> raw response:', body);
+    // backend may return { success, data } or raw array
+    const arr = Array.isArray(body) ? body : (body && body.data ? body.data : []);
+    console.info('[videoService] fetchVideos -> normalized array (length=' + (arr?.length || 0) + '):', arr);
+    return Array.isArray(arr) ? arr : [];
+  } catch (err) {
+    console.error('[videoService] fetchVideos error', err);
+    throw err;
+  }
+}
 
 export async function searchVideos({ q = '', page = 1 } = {}) {
   const url = `${API_BASE}/videos/search?q=${encodeURIComponent(q)}&page=${encodeURIComponent(page)}`;
@@ -66,4 +89,5 @@ export default {
   getTrending,
   downloadVideo,
   getVideoById,
+  fetchVideos,
 };
