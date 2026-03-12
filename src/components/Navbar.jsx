@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
 import { Search, User, Menu, X, Clock, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -85,28 +84,18 @@ export default function Navbar({
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
         {/* Logo */}
         <div
-          className="flex items-center gap-4 flex-shrink-0"
+          className="flex items-center gap-2 flex-shrink-0 cursor-pointer"
+          onClick={() => {
+            if (onHomeClick) onHomeClick();
+            else window.location.reload();
+          }}
         >
-          <div
-            className="flex items-center gap-2 cursor-pointer"
-            onClick={() => {
-              if (onHomeClick) onHomeClick();
-              else window.location.reload();
-            }}
-          >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF4654] to-[#FF7043] flex items-center justify-center text-white font-black text-xl shadow-lg shadow-red-200/30">
-              L
-            </div>
-            <span className="text-2xl font-black tracking-tight text-[#1A1A2E] hidden md:block">
-              Let<span className="text-[#FF4654]">Stream</span>
-            </span>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF4654] to-[#FF7043] flex items-center justify-center text-white font-black text-xl shadow-lg shadow-red-200/30">
+            L
           </div>
-          <Link
-            to="/tiktok"
-            className="text-sm font-bold text-gray-600 hover:text-[#FF4654] transition-colors hidden md:block"
-          >
-            Shorts
-          </Link>
+          <span className="text-2xl font-black tracking-tight text-[#1A1A2E] hidden md:block">
+            Let<span className="text-[#FF4654]">Stream</span>
+          </span>
         </div>
 
         {/* Search Bar - Desktop */}

@@ -18,6 +18,15 @@ export function parseDurationToSeconds(val) {
   return 0;
 }
 
+/** Get duration in seconds from API item (tries duration, length, runtime, duration_formatted). */
+export function getDurationSecondsFromItem(item) {
+  if (!item || typeof item !== 'object') return 0;
+  const raw = item.duration ?? item.length ?? item.runtime ?? item.duration_formatted ?? item.duration_sec;
+  const sec = parseDurationToSeconds(raw);
+  if (sec > 0) return sec;
+  return parseDurationToSeconds(item.duration) || Number(item.duration) || 0;
+}
+
 /**
  * Format duration as "M:SS" or "H:MM:SS".
  * Accepts: number (seconds), or string ("12:34", "1:05:30", or "90").

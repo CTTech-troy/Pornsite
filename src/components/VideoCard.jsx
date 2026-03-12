@@ -4,6 +4,7 @@ import { Heart, MessageCircle, Eye, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { isDirectStreamUrl } from '../utils/streamUrl';
 import { formatDuration } from '../utils/formatDuration';
+import { isValidVideoUrl } from '../utils/videoValidation';
 
 const FALLBACK_AVATAR = 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=60&crop=faces&bg=fff';
 const FALLBACK_THUMBNAIL = '/fallback.jpg';
@@ -48,7 +49,7 @@ export default function VideoCard({
   const runningPreviewRef = useRef(false);
   const metadataLoadedRef = useRef(false);
 
-  const effectiveVideoSrc = videoSrc && isDirectStreamUrl(videoSrc) ? videoSrc : '';
+  const effectiveVideoSrc = videoSrc && typeof videoSrc === 'string' && isValidVideoUrl(videoSrc) && isDirectStreamUrl(videoSrc) ? videoSrc : '';
 
   useEffect(() => {
     const mq = window.matchMedia('(hover: hover)');
@@ -186,6 +187,19 @@ export default function VideoCard({
             preload="metadata"
             poster={thumbSrc}
             className={`w-full h-full object-cover absolute inset-0 transition-opacity duration-300 ${shouldPreview ? 'opacity-100' : 'opacity-0'}`}
+            onLoadedData={() => {
+              if (runningPreviewRef.current && shouldPreview) metadataLoadedRef.current = true;
+            }}
+            onCanPlay={() => {
+              metadataLoadedRef.current = true;
+            }}
+            onError={(e) => {
+              const el = e.target;
+              const err = el?.error;
+              const code = err?.code;
+              const msg = err?.message || 'Unknown';
+              console.warn('Video playback error (card preview):', { code, message: msg, url: effectiveVideoSrc?.slice(0, 80) });
+            }}
           />
         )}
         {/* Preview overlay - desktop only when this card is active */}

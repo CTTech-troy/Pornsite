@@ -11,6 +11,51 @@ import { getMyActiveLive } from '../api/liveApi';
 import { getPathSafeVideoId } from '../utils/videoId';
 import { descriptionFromTitle } from '../utils/descriptionFromTitle';
 
+const SITE_NAME = 'LetStream';
+
+/** Set document meta for link preview (thumbnail, title) when pasted. */
+function setVideoMeta(video, videoIdParam) {
+  if (!video) return;
+  const pathId = getPathSafeVideoId(video.id) || videoIdParam || '';
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const canonicalUrl = pathId ? `${origin}/video/${pathId}` : origin;
+  const title = video.title ? `${String(video.title).slice(0, 60)} | ${SITE_NAME}` : SITE_NAME;
+  const description = video.description || video.title || `Watch on ${SITE_NAME}`;
+  const imageUrl = video.thumbnail && video.thumbnail.trim()
+    ? (video.thumbnail.startsWith('http') ? video.thumbnail : `${origin}${video.thumbnail.startsWith('/') ? '' : '/'}${video.thumbnail}`)
+    : '';
+
+  const setMeta = (property, content) => {
+    if (!content) return;
+    let el = document.querySelector(`meta[property="${property}"][data-dynamic-og]`) || document.querySelector(`meta[name="${property}"][data-dynamic-og]`);
+    if (!el) {
+      el = document.createElement('meta');
+      el.setAttribute('data-dynamic-og', '1');
+      const isOg = property.startsWith('og:');
+      el.setAttribute(isOg ? 'property' : 'name', property);
+      document.head.appendChild(el);
+    }
+    el.setAttribute('content', content);
+  };
+
+  document.title = title;
+  setMeta('og:title', title);
+  setMeta('og:description', String(description).slice(0, 200));
+  setMeta('og:url', canonicalUrl);
+  setMeta('og:type', 'video.other');
+  if (imageUrl) setMeta('og:image', imageUrl);
+  setMeta('twitter:card', 'summary_large_image');
+  setMeta('twitter:title', title);
+  setMeta('twitter:description', String(description).slice(0, 200));
+  if (imageUrl) setMeta('twitter:image', imageUrl);
+}
+
+/** Reset meta when leaving the video page. */
+function resetVideoMeta() {
+  document.title = SITE_NAME;
+  document.querySelectorAll('meta[data-dynamic-og]').forEach((el) => el.remove());
+}
+
 function formatTimeAgo(ts) {
   if (!ts) return '';
   const d = Date.now() - Number(ts);
@@ -148,6 +193,12 @@ export default function VideoDetailRoute() {
       });
     return () => { cancelled = true; };
   }, [videoId, state?.video]);
+
+  // Update document meta for link preview (thumbnail, title) when video is loaded
+  useEffect(() => {
+    if (video) setVideoMeta(video, videoId);
+    return () => resetVideoMeta();
+  }, [video, videoId]);
 
   const handleBack = () => {
     navigate('/');

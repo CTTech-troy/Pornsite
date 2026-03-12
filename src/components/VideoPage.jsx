@@ -1,9 +1,11 @@
-import React, { useEffect, useState, useRef, Fragment } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { usePublicVideoInteractions } from '../hooks/usePublicVideoInteractions';
 import { useAdManager } from '../context/AdManagerContext';
 import { getPathSafeVideoId } from '../utils/videoId';
-import { resolvePlayerSource } from '../utils/streamUrl';
+import { resolvePlayerSource, isDirectStreamUrl, getEmbedUrl } from '../utils/streamUrl';
+import { isValidVideoUrl } from '../utils/videoValidation';
 import { descriptionFromTitle } from '../utils/descriptionFromTitle';
+import { formatDuration, parseDurationToSeconds } from '../utils/formatDuration';
 import {
   ThumbsUp,
   MessageCircle,
@@ -19,7 +21,6 @@ import {
 } from
   'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import AdBanner from './AdBanner';
 import VideoCard from './VideoCard.jsx';
 
 export default function VideoPage({
@@ -82,49 +83,49 @@ export default function VideoPage({
   useEffect(() => {
     const fetchRelated = async () => {
       if (!activeVideo) return;
-      const tags = activeVideo.tags || [];
-      const query = tags.length > 0 ? tags[0] : (activeVideo.category || 'trending');
+      const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
       try {
         setFetchingRelated(true);
-        const endpoint = `https://pornhub2.p.rapidapi.com/v2/video/search?q=${encodeURIComponent(query)}&page=1`;
-        const res = await fetch(endpoint, {
-          headers: {
-            'x-rapidapi-key': import.meta.env.VITE_RAPIDAPI_KEY || 'YOUR_API_KEY',
-            'x-rapidapi-host': 'pornhub2.p.rapidapi.com'
-          }
-        });
-        const data = await res.json();
-        if (data && data.data) {
-          const items = data.data;
-          // Shuffle the array elements randomly
-          for (let i = items.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [items[i], items[j]] = [items[j], items[i]];
-          }
-
-          const mapped = items.map(v => ({
-            id: v.id,
-            title: v.title || 'Video',
-            channel: v.channel || 'Creator',
-            views: v.views ?? 0,
-            thumbnail: v.thumbnailUrl || v.thumbnail || '',
-            duration: formatDuration(v.duration),
-            durationSeconds: parseDurationToSeconds(v.duration) || Number(v.duration) || 0,
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(v.id)}`,
-            videoSrc: v.videoUrl || '',
-            likes: '0',
-            comments: '0',
-            description: v.title || ''
-          })).filter(v => v.id !== activeVideo?.id).slice(0, 6);
-          setFetchedRelated(mapped);
-        }
+        const url = `${apiBase}/api/videos/trending?page=1&limit=20`;
+        const res = await fetch(url);
+        const json = await res.json().catch(() => ({}));
+        console.log('Video API Response: related/trending', { ok: res.ok, count: (json?.data || []).length, json });
+        const rawList = json?.data || json?.items || (Array.isArray(json) ? json : []);
+        const list = Array.isArray(rawList) ? rawList : [];
+        const mapped = list
+          .filter((v) => v && (v.id || v.video_id) !== activeVideo?.id)
+          .slice(0, 6)
+          .map((v) => {
+            const id = v.id ?? v.video_id ?? v.key ?? '';
+            const videoUrl = v.videoSrc ?? v.video_url ?? v.url ?? '';
+            if (!videoUrl || typeof videoUrl !== 'string' || !videoUrl.startsWith('http')) {
+              console.warn('[Video API] Related video missing or invalid video_url:', { id });
+            }
+            const title = v.title || v.name || 'Video';
+            return {
+              id,
+              title,
+              channel: v.channel || v.uploader || v.creator || 'Creator',
+              views: v.views ?? v.views_count ?? 0,
+              thumbnail: v.thumbnail || v.thumbnailUrl || v.thumb || '',
+              duration: typeof v.duration === 'string' ? v.duration : formatDuration(v.duration),
+              durationSeconds: parseDurationToSeconds(v.duration) || Number(v.duration) || 0,
+              avatar: v.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(id)}`,
+              videoSrc: videoUrl,
+              likes: v.likes ?? v.rating ?? '0',
+              comments: v.comments ?? '0',
+              time: v.time || v.added || '',
+              description: v.description || title,
+            };
+          });
+        setFetchedRelated(mapped);
       } catch (e) {
         console.warn('Failed to fetch related', e);
+        setFetchedRelated([]);
       } finally {
         setFetchingRelated(false);
       }
     };
-    // only run when video changes
     fetchRelated();
   }, [activeVideo?.id]);
 
@@ -144,40 +145,32 @@ export default function VideoPage({
   const [controllerLoading, setControllerLoading] = useState(false);
   const [controllerError, setControllerError] = useState(null);
   const [controllerAttempted, setControllerAttempted] = useState(false);
+
+  // When no ad URL is configured, show main video immediately
+  useEffect(() => {
+    if (!AD_VIDEO_URL) {
+      setAdEndedOrSkipped(true);
+    }
+  }, [AD_VIDEO_URL]);
   useEffect(() => {
     // Log resolved player source to help debug playback issues (CORS/embed restrictions, missing streams)
     try {
-      console.debug('[VideoPage] playerSource resolved:', playerSource);
+      console.debug('[VideoPage] playerSource resolved:', { mode: playerSource.mode, url: playerSource.url, stableVideoId });
       if (!mainVideoSrcState && !embedUrlState && !externalUrl) {
         console.warn('[VideoPage] No playable source for video id:', stableVideoId, 'playerSource=', playerSource);
       }
     } catch (e) {
-      // ignore logging errors
+      console.error('[VideoPage] Logging error', e);
     }
   }, [playerSource, mainVideoSrcState, embedUrlState, externalUrl, stableVideoId]);
 
-  // Auto-play the clicked video when the page loads (prefer direct stream).
+  // Auto-play the main video when it becomes ready (onCanPlay handles actual play() call).
   useEffect(() => {
-    // Only attempt autoplay for direct streams; for embed players autoplay may be blocked.
     if (!stableVideoId) return;
     if (mainVideoSrcState) {
-      // mark ad as skipped/ended so the main video is visible
       setAdEndedOrSkipped(true);
-      // try to play after a short delay so the element is mounted
-      const t = setTimeout(() => {
-        try {
-          // allow muted autoplay which browsers permit
-          if (mainVideoRef.current) mainVideoRef.current.muted = true;
-          setIsBuffering(true);
-          playMainVideo.current();
-        } catch (e) {
-          console.warn('Auto-play failed', e);
-        }
-      }, 120);
-      return () => clearTimeout(t);
     }
-    // If no direct stream but we have an embed, let the iframe load — autoplay often blocked by browsers.
-  }, [stableVideoId, mainVideoSrcState, embedUrlState]);
+  }, [stableVideoId, mainVideoSrcState]);
   const hasPlayableSource = Boolean(mainVideoSrcState) || Boolean(embedUrlState) || playerSource.mode === 'iframe';
   const hasDirectStream = Boolean(mainVideoSrcState);
   const isExternalOnly = playerSource.mode === 'external';
@@ -185,15 +178,28 @@ export default function VideoPage({
 
   const playMainVideo = useRef(() => { });
   playMainVideo.current = (userInitiated = false) => {
-    if (!mainVideoRef.current || !mainVideoSrcState) return;
-    // mark buffering until we get onPlaying/onCanPlay
+    if (!mainVideoRef.current || !mainVideoSrcState) {
+      console.debug('[VideoPage] playMainVideo skipped:', { hasRef: !!mainVideoRef.current, hasSrc: !!mainVideoSrcState });
+      return;
+    }
+    if (!isValidVideoUrl(mainVideoSrcState)) {
+      console.error('[VideoPage] Video playback error: invalid video_url', { url: mainVideoSrcState?.slice?.(0, 80) });
+      return;
+    }
     setIsBuffering(true);
     try {
       if (userInitiated) mainVideoRef.current.muted = false;
-      mainVideoRef.current.play().catch((e) => console.warn(e));
-      setMainPlaying(true);
+      console.log('Attempting to play video:', mainVideoSrcState.slice(0, 100) + (mainVideoSrcState.length > 100 ? '...' : ''));
+      mainVideoRef.current.play().then(() => {
+        setMainPlaying(true);
+        setIsBuffering(false);
+      }).catch((e) => {
+        console.error('Video playback error:', e?.message || e, { url: mainVideoSrcState?.slice?.(0, 80) });
+        setIsBuffering(false);
+      });
     } catch (e) {
-      console.warn('playMainVideo error', e);
+      console.error('[VideoPage] playMainVideo error:', e?.message || e, e);
+      setIsBuffering(false);
     }
   };
 
@@ -222,56 +228,59 @@ export default function VideoPage({
 
   useEffect(() => {
     if (!adEndedOrSkipped || !mainVideoSrcState) return;
-    const id = setTimeout(() => {
-      if (mainVideoRef.current) {
-        setIsBuffering(true);
-        playMainVideo.current(true);
-      }
-    }, 80);
-    return () => clearTimeout(id);
+    if (mainVideoRef.current && mainVideoRef.current.readyState >= 2) {
+      playMainVideo.current(false);
+    }
   }, [adEndedOrSkipped, mainVideoSrcState]);
 
   // If the resolved source is an "external" page, attempt to ask the backend
   // controller for a playable stream and play it in our player.
+  const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
   useEffect(() => {
     if (!stableVideoId) return;
     // Only try once per mount/navigation when we have an externalUrl and no main src
     if (!externalUrl || mainVideoSrcState || controllerAttempted) return;
     let aborted = false;
     const abortController = new AbortController();
+    const streamUrl = `${apiBase}/api/videos/stream/${stableVideoId}`;
+    console.debug('[VideoPage] Fetching stream from controller:', streamUrl, 'videoId:', stableVideoId);
     (async () => {
       try {
         setControllerAttempted(true);
         setControllerLoading(true);
         setControllerError(null);
-        // Backend endpoint expected to return JSON: { url: string }
-        const resp = await fetch(`/api/videos/stream/${stableVideoId}`, { signal: abortController.signal });
+        const resp = await fetch(streamUrl, { signal: abortController.signal });
         if (aborted) return;
+        const respText = await resp.text();
         if (!resp.ok) {
-          const txt = await resp.text().catch(() => '');
-          throw new Error(`Controller response ${resp.status} ${txt}`);
+          console.error('[VideoPage] Controller stream error:', resp.status, resp.statusText, respText);
+          throw new Error(`Controller response ${resp.status} ${respText.slice(0, 200)}`);
         }
-        const data = await resp.json().catch(() => ({}));
+        let data = {};
+        try {
+          data = JSON.parse(respText);
+        } catch (parseErr) {
+          console.error('[VideoPage] Controller response not JSON:', respText.slice(0, 200), parseErr);
+          throw new Error('Invalid JSON from stream controller');
+        }
         if (data && data.url) {
           const url = String(data.url || '');
-          // simple heuristic: if URL looks like a media file or HLS manifest, treat as direct stream
-          const mediaExtRe = /\.(mp4|webm|m3u8|mpd|mov|m4v)(\?|$)/i;
-          const isMedia = mediaExtRe.test(url) || url.includes('.m3u8') || url.includes('.mpd');
-          if (isMedia) {
+          console.debug('[VideoPage] Stream URL received, about to set source:', url.slice(0, 80) + (url.length > 80 ? '...' : ''));
+          if (isDirectStreamUrl(url)) {
             setMainVideoSrcState(url);
           } else {
-            // treat as embed/page URL — show in iframe when possible
-            setEmbedUrlState(url);
+            const embed = getEmbedUrl(url, stableVideoId);
+            setEmbedUrlState(embed || url);
           }
-          // ensure main area is visible
           setAdEndedOrSkipped(true);
         } else {
+          console.error('[VideoPage] Controller returned no url:', data);
           setControllerError('No stream returned from controller');
         }
       } catch (err) {
         if (err.name === 'AbortError') return;
-        console.warn('Controller stream fetch failed', err);
-        setControllerError(String(err));
+        console.error('[VideoPage] Controller stream fetch failed:', err?.message || err, err);
+        setControllerError(err?.message || String(err));
       } finally {
         setControllerLoading(false);
       }
@@ -280,7 +289,7 @@ export default function VideoPage({
       aborted = true;
       abortController.abort();
     };
-  }, [stableVideoId, externalUrl, mainVideoSrcState, controllerAttempted]);
+  }, [stableVideoId, externalUrl, mainVideoSrcState, controllerAttempted, apiBase]);
 
   const handlePlayClick = () => {
     if (adEndedOrSkipped) {
@@ -379,9 +388,8 @@ export default function VideoPage({
       <div className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
         {/* Main Content (Video + Info) - Sticky */}
         <div className="lg:col-span-2 lg:sticky lg:top-24">
-          {/* Video Player: ad then main */}
+          {/* Video Player: main video or embed */}
           <div className={`aspect-video w-full rounded-2xl ${video.thumbnailColor || 'bg-gray-900'} shadow-xl relative overflow-hidden group mb-4`}>
-            <AdBanner size="banner" className="my-2" />
 
             {AD_VIDEO_URL && (
               <video
@@ -410,14 +418,39 @@ export default function VideoPage({
               <video
                 ref={mainVideoRef}
                 className="absolute inset-0 w-full h-full object-contain"
-                src={mainVideoSrcState}
+                src={isValidVideoUrl(mainVideoSrcState) ? mainVideoSrcState : ''}
                 poster={activeVideo?.thumbnail}
-                controls={true}
+                controls
                 playsInline
+                muted
+                onLoadStart={() => {
+                  console.debug('[VideoPage] Main video load started');
+                  setIsBuffering(true);
+                }}
+                onLoadedData={() => {
+                  console.debug('[VideoPage] Main video loaded data, about to be playable');
+                }}
+                onCanPlay={() => {
+                  console.log('Video ready to play:', (mainVideoSrcState || '').slice(0, 100) + ((mainVideoSrcState || '').length > 100 ? '...' : ''));
+                  setIsBuffering(false);
+                  if (adEndedOrSkipped && !mainPlaying) {
+                    playMainVideo.current(false);
+                  }
+                }}
+                onPlaying={() => {
+                  console.debug('[VideoPage] Main video playing');
+                  setIsBuffering(false);
+                }}
                 onEnded={() => setMainPlaying(false)}
                 onWaiting={() => setIsBuffering(true)}
-                onPlaying={() => setIsBuffering(false)}
-                onCanPlay={() => setIsBuffering(false)}
+                onError={(e) => {
+                  const el = e.target;
+                  const err = el?.error;
+                  const code = err?.code;
+                  const message = err?.message || 'Unknown';
+                  console.error('Video playback error:', { code, message, MEDIA_ERR_ABORTED: 1, MEDIA_ERR_NETWORK: 2, MEDIA_ERR_DECODE: 3, MEDIA_ERR_SRC_NOT_SUPPORTED: 4, url: mainVideoSrcState?.slice?.(0, 80) });
+                  setIsBuffering(false);
+                }}
                 style={{ display: adEndedOrSkipped ? 'block' : 'none' }}
               />
             )}
@@ -432,27 +465,33 @@ export default function VideoPage({
                 style={{ display: 'block' }}
               />
             )}
-            {/* Controller loading / error overlay for external-only sources */}
-            {!hasPlayableSource && externalUrl && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                {controllerLoading ? (
-                  <div className="flex items-center gap-3 bg-black/60 text-white rounded-lg px-4 py-3">
-                    <div className="w-6 h-6 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                    <span>Loading video...</span>
-                  </div>
-                ) : controllerError ? (
-                  <div className="flex flex-col items-center gap-2 bg-white/90 rounded-lg p-4 shadow-md">
-                    <div className="text-sm text-gray-700">Unable to load video from controller</div>
-                    <div className="text-xs text-red-500">{controllerError}</div>
-                  </div>
-                ) : (
-                  <div className="text-sm text-gray-600 bg-white/80 rounded-lg px-4 py-2">Preparing video...</div>
-                )}
+            {/* Controller state for external sources: show play button (no loading text), or error */}
+            {!hasPlayableSource && externalUrl && !controllerError && (
+              <div
+                className="absolute inset-0 flex items-center justify-center cursor-pointer bg-black/40 rounded-2xl"
+                onClick={controllerLoading ? undefined : handlePlayClick}
+                onKeyDown={(e) => !controllerLoading && e.key === 'Enter' && handlePlayClick()}
+                role="button"
+                tabIndex={controllerLoading ? -1 : 0}
+                aria-label="Play video"
+              >
+                <div className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center hover:scale-110 transition-transform pointer-events-none">
+                  <div className="w-0 h-0 border-t-[12px] border-t-transparent border-l-[20px] border-l-white border-b-[12px] border-b-transparent ml-1" />
+                </div>
               </div>
             )}
-            {/* Netflix-style buffering loader (for ad or main video) */}
+            {!hasPlayableSource && externalUrl && controllerError && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-2xl p-4">
+                <div className="flex flex-col items-center gap-3 bg-white/95 rounded-xl p-6 shadow-lg max-w-md mx-4">
+                  <div className="text-sm font-bold text-gray-800">Unable to load video</div>
+                  <div className="text-xs text-red-600 text-center break-words">{controllerError}</div>
+                  <div className="text-[10px] text-gray-500">Check console for details</div>
+                </div>
+              </div>
+            )}
+            {/* Buffering loader (ad or main video only; not controller loading) */}
             <AnimatePresence>
-              {(isAdPlaying && isAdBuffering) || (mainPlaying && isBuffering) || controllerLoading ? (
+              {(isAdPlaying && isAdBuffering) || (mainPlaying && isBuffering) ? (
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -802,15 +841,11 @@ export default function VideoPage({
             Related Videos {fetchingRelated && <Loader2 className="inline ml-2 w-4 h-4 animate-spin text-gray-500" />}
           </h3>
           <div className="flex flex-col gap-4">
-            {relatedVideosToDisplay.map((relatedVideo, index) =>
-              <Fragment key={relatedVideo.id}>
-                <VideoCard
-                  {...relatedVideo}
-                  onClick={() => onVideoClick?.(relatedVideo)} />
-
-                {/* Insert Ad after 3rd video */}
-                {index === 2 && <AdBanner size="banner" className="my-2" />}
-              </Fragment>
+            {relatedVideosToDisplay.map((relatedVideo) =>
+              <VideoCard
+                key={relatedVideo.id}
+                {...relatedVideo}
+                onClick={() => onVideoClick?.(relatedVideo)} />
             )}
           </div>
         </div>

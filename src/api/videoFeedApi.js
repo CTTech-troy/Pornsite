@@ -37,7 +37,15 @@ export async function getVideosPage({ page = 1, limit = 20 } = {}) {
 export async function getVideoById(id) {
   if (!id) return null;
   const data = await request(`/api/videos/${encodeURIComponent(id)}`).catch(() => null);
-  return data?.data ?? data ?? null;
+  const video = data?.data ?? data ?? null;
+  if (video) {
+    const url = video.videoUrl ?? video.video_url ?? video.url ?? video.videoSrc ?? '';
+    if (!url || typeof url !== 'string' || !url.startsWith('http')) {
+      console.warn('[Video API] getVideoById: video missing or invalid video_url', { id, url: url?.slice?.(0, 60) });
+    }
+    console.log('Video API Response: getVideoById', { id, hasUrl: !!(url && url.startsWith('http')) });
+  }
+  return video;
 }
 
 /**

@@ -6,7 +6,6 @@ import  Sidebar  from '../components/Sidebar';
 import  Dashboard  from '../components/Dashboard';
 import  AuthModal  from '../components/AuthModal';
 import  UploadModal  from '../components/UploadModal';
-import  AdBanner  from '../components/AdBanner';
 import  PublicProfile  from '../components/PublicProfile';
 import  LiveStreamPage  from '../components/LiveStreamPage';
 import  CreatorApplicationModal  from '../components/CreatorApplicationModal';
@@ -217,8 +216,6 @@ export default function MainPage() {
         ) : (
           <main className="max-w-7xl mx-auto px-4 pb-12">
             <LiveNowSection onStreamClick={handleLiveStreamClick} />
-
-            <AdBanner size="leaderboard" />
 
             <div className="flex flex-col lg:flex-row gap-8 mt-4">
               <VideoFeed

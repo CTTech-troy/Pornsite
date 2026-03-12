@@ -3,7 +3,9 @@ import { motion } from 'framer-motion';
 import { Search } from 'lucide-react';
 import VideoCard from './VideoCard';
 import { descriptionFromTitle } from '../utils/descriptionFromTitle';
+import { getDurationSecondsFromItem } from '../utils/formatDuration';
 import { fetchTrendingVideos, fetchHomeFeed } from '../api/trendingApi';
+import { isValidVideoUrl } from '../utils/videoValidation';
 
 function formatDuration(seconds) {
   if (seconds == null || Number.isNaN(Number(seconds))) return '0:00';
@@ -23,6 +25,10 @@ function extractVideosFromSearchResponse(data) {
 
 function mapSearchHitToCard(v) {
   if (!v || typeof v !== 'object') return null;
+  const videoUrl = v.url ?? v.video_url ?? v.link ?? '';
+  if (!isValidVideoUrl(videoUrl)) {
+    console.error('[VideoFeed] Search hit missing or invalid video_url:', { id: v.video_id ?? v.id, url: videoUrl?.slice?.(0, 60) });
+  }
   const title = v.title || v.title_clean || v.name || 'Video';
   const thumb = v.thumb ?? v.thumbnail ?? v.thumbnailUrl ?? v.poster ?? (v.thumbs && (v.thumbs[0]?.src ?? v.thumbs[0])) ?? '';
   const thumbStr = typeof thumb === 'string' ? thumb : (thumb?.src ?? thumb?.url ?? '');
@@ -32,10 +38,10 @@ function mapSearchHitToCard(v) {
     channel: v.channel ?? v.uploader ?? v.creator ?? (v.pornstars && (Array.isArray(v.pornstars) ? v.pornstars[0] : v.pornstars)) ?? 'Creator',
     views: v.views ?? v.views_count ?? 0,
     thumbnail: thumbStr,
-    duration: formatDuration(v.duration),
-    durationSeconds: parseDurationToSeconds(v.duration) || Number(v.duration) || 0,
+    duration: formatDuration(getDurationSecondsFromItem(v)),
+    durationSeconds: getDurationSecondsFromItem(v),
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(String(v.video_id || v.id || title)).slice(0, 50)}`,
-    videoSrc: v.url ?? v.video_url ?? v.link ?? '',
+    videoSrc: videoUrl,
     likes: v.rating ?? '0',
     comments: '0',
     time: v.time ?? v.added ?? '',
@@ -56,6 +62,7 @@ export default function VideoFeed({
   const [error, setError] = useState(null);
   const [activePreviewId, setActivePreviewId] = useState(null);
   const observerTargetRef = useRef(null);
+  const loadedPagesRef = useRef(new Set());
 
   const pageSize = 20;
   const isSearchMode = Boolean(searchQuery);
@@ -84,9 +91,15 @@ export default function VideoFeed({
           setError(null);
           setHasMore(true);
           setPage(1);
+          loadedPagesRef.current = new Set();
         }
         const pagesToFetch = isRefresh ? 3 : 1;
         const startPage = isRefresh ? 1 : pageNum;
+        if (!isRefresh && loadedPagesRef.current.has(startPage)) {
+          setIsLoading(false);
+          return;
+        }
+        loadedPagesRef.current.add(startPage);
         const { items, hasMore: more, nextPage: next } = await fetchHomeFeed(startPage, pagesToFetch, 'hot');
         if (next != null) setNextPage(next);
         if (items.length === 0) setHasMore(false);
@@ -99,6 +112,7 @@ export default function VideoFeed({
           setHasMore(Boolean(more));
           setLocalVideos((prev) => (isRefresh ? items : [...prev, ...items]));
         } catch (fallbackErr) {
+          loadedPagesRef.current.delete(isRefresh ? 1 : pageNum);
           setError(fallbackErr?.message || err?.message || 'Failed to load feed');
           setHasMore(false);
         }
@@ -119,6 +133,7 @@ export default function VideoFeed({
       if (isRefresh) {
         setError(null);
         setHasMore(true);
+        loadedPagesRef.current = new Set();
       }
 
       const searchTerm = searchQuery.trim();
@@ -130,6 +145,12 @@ export default function VideoFeed({
         thumbsize: 'small',
       });
       const url = `https://${RAPIDAPI_HOST}/v2/search?${params.toString()}`;
+
+      if (!isRefresh && loadedPagesRef.current.has(pageNum)) {
+        setIsLoading(false);
+        return;
+      }
+      loadedPagesRef.current.add(pageNum);
 
       const response = await fetch(url, {
         method: 'GET',
@@ -154,6 +175,7 @@ export default function VideoFeed({
 
       setLocalVideos((prev) => (isRefresh ? mapped : [...prev, ...mapped]));
     } catch (err) {
+      loadedPagesRef.current.delete(pageNum);
       setError(err?.message || 'Failed to load videos');
       setHasMore(false);
     } finally {

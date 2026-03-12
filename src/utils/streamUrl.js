@@ -4,7 +4,7 @@
  */
 
 const DIRECT_STREAM_EXT = /\.(mp4|m3u8|webm|ogg|mov)(\?|$)/i;
-const DIRECT_STREAM_PATH = /\/video\/|\.mp4|\.m3u8|\.webm|googlevideo\.com|cloudfront\.net|cloudinary\.com|firebasestorage\.googleapis\.com/i;
+const DIRECT_STREAM_PATH = /\/video\/|\.mp4|\.m3u8|\.webm|googlevideo\.com|cloudfront\.net|cloudinary\.com|firebasestorage\.googleapis\.com|supabase\.co|storage\/v1\/object\/public/i;
 const PAGE_OR_EMBED_PATTERN = /view_video\.php|viewkey=|\/watch\?|youtube\.com\/watch|vimeo\.com\/\d+|dailymotion\.com\/video|\/view\//i;
 
 /**
@@ -25,6 +25,7 @@ export function getDirectStreamUrl(video) {
   if (!video) return '';
   const candidates = [
     video.streamUrl,
+    video.storage_url,
     video.videoSrc,
     video.url,
     video.videoUrl,
@@ -65,6 +66,12 @@ export function getEmbedUrl(url, videoId) {
   return '';
 }
 
+function isPornhubPageUrl(val) {
+  if (!val || typeof val !== 'string') return false;
+  const s = val.trim().toLowerCase();
+  return s.includes('pornhub') || s.includes('viewkey') || /^[a-z0-9]{8,15}$/.test(s);
+}
+
 function tryEmbedFromId(videoId) {
   if (!videoId || typeof videoId !== 'string') return '';
   const id = videoId.trim();
@@ -81,7 +88,7 @@ export function resolvePlayerSource(video) {
   if (direct) {
     return { mode: 'video', url: direct };
   }
-  const raw = (video?.streamUrl || video?.videoSrc || video?.url || video?.videoUrl || video?.video_url || video?.embed_url || video?.watch_url || video?.embed_code || '').trim();
+  const raw = (video?.streamUrl || video?.storage_url || video?.videoSrc || video?.url || video?.videoUrl || video?.video_url || video?.embed_url || video?.watch_url || video?.embed_code || '').trim();
   
   // Handle literal iframe code from RapidAPI embed_code
   if (raw.toLowerCase().includes('<iframe') && raw.includes('src="')) {
