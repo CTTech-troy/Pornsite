@@ -56,13 +56,21 @@ export async function uploadVideoPublish(formData, idToken) {
   const API_UPLOAD = `${API_URL.replace(/\/$/, '')}/api/videos/upload`;
   const headers = {};
   if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
-  const res = await fetch(API_UPLOAD, {
-    method: 'POST',
-    headers,
-    body: formData,
-  });
-  const json = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, body: json };
+  try {
+    const res = await fetch(API_UPLOAD, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    const json = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, body: json };
+  } catch (err) {
+    const isConnectionRefused = err?.message?.includes('Failed to fetch') || err?.name === 'TypeError';
+    const message = isConnectionRefused
+      ? 'Cannot connect to server. Make sure the backend is running (e.g. run "npm run dev" in the backend folder).'
+      : (err?.message || 'Upload failed');
+    return { ok: false, status: 0, body: { success: false, message } };
+  }
 }
 
 export default {

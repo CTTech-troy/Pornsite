@@ -28,6 +28,8 @@ export function getDirectStreamUrl(video) {
     video.videoSrc,
     video.url,
     video.videoUrl,
+    video.video_url, // RapidAPI
+    video.file_url,
   ].filter(Boolean);
   for (const u of candidates) {
     if (isDirectStreamUrl(u)) return u;
@@ -35,11 +37,7 @@ export function getDirectStreamUrl(video) {
   return '';
 }
 
-/** True if URL is a Pornhub watch/page link (embed loads pornhub.com and often times out). */
-export function isPornhubPageUrl(url) {
-  if (!url || typeof url !== 'string') return false;
-  return /pornhub\.com|viewkey=/i.test(url.trim());
-}
+// Removed Pornhub-specific embed generation to avoid client-side scraping/embedding.
 
 /**
  * If the URL is a known page/watch URL, try to convert to an embed URL for <iframe>.
@@ -51,7 +49,7 @@ export function getEmbedUrl(url, videoId) {
     return '';
   }
   const u = url.trim();
-  if (isPornhubPageUrl(u)) return '';
+  // Don't generate Pornhub embed URLs here. Fall through to other providers below.
   const ytMatch = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?\s]+)/);
   if (ytMatch) {
     return `https://www.youtube.com/embed/${ytMatch[1]}`;
@@ -83,14 +81,35 @@ export function resolvePlayerSource(video) {
   if (direct) {
     return { mode: 'video', url: direct };
   }
-  const raw = (video?.streamUrl || video?.videoSrc || video?.url || video?.videoUrl || '').trim();
+  const raw = (video?.streamUrl || video?.videoSrc || video?.url || video?.videoUrl || video?.video_url || video?.embed_url || video?.watch_url || video?.embed_code || '').trim();
+  
+  // Handle literal iframe code from RapidAPI embed_code
+  if (raw.toLowerCase().includes('<iframe') && raw.includes('src="')) {
+      const match = raw.match(/src=["']([^"']+)["']/);
+      if (match) {
+          return { mode: 'iframe', url: match[1], embedUrl: match[1] };
+      }
+  }
+
   const videoId = video?.id ?? video?.videoId;
   const embedUrl = getEmbedUrl(raw, videoId);
   if (embedUrl) {
     return { mode: 'iframe', url: embedUrl, embedUrl };
   }
-  if (raw && isPornhubPageUrl(raw)) {
+  
+  // If it's a direct url specifically intended for embedding from API
+  if (video?.embed_url) {
+    return { mode: 'iframe', url: video.embed_url, embedUrl: video.embed_url };
+  }
+
+  // If the URL looks like a page/watch URL for known providers, treat as external.
+  if (raw && PAGE_OR_EMBED_PATTERN.test(raw)) {
     return { mode: 'external', url: raw, externalUrl: raw };
   }
+  // Try treating watch_url as an external if all else fails
+  if (video?.watch_url) {
+    return { mode: 'external', url: video.watch_url, externalUrl: video.watch_url };
+  }
+
   return { mode: 'unavailable', url: '' };
 }

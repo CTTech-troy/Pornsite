@@ -10,9 +10,9 @@ const defaultThumbnails = [
   'bg-gradient-to-br from-indigo-500 to-purple-700',
 ];
 
-function mapLiveToStream(live: { id: string; host_id: string; host_display_name?: string | null; viewers_count?: number }, index: number) {
+function mapLiveToStream(live, index) {
   const hostId = live.host_id || live.id;
-  const displayName = live.host_display_name?.trim() || hostId.slice(0, 12);
+  const displayName = (live.host_display_name && live.host_display_name.trim()) ? live.host_display_name.trim() : String(hostId).slice(0, 12);
   return {
     id: live.id,
     host_id: hostId,
@@ -25,15 +25,15 @@ function mapLiveToStream(live: { id: string; host_id: string; host_display_name?
   };
 }
 
-export default function LiveNowSection({ onStreamClick }: { onStreamClick?: (stream: Record<string, unknown>) => void }) {
-  const [streams, setStreams] = useState<Array<Record<string, unknown>>>([]);
+export default function LiveNowSection({ onStreamClick }) {
+  const [streams, setStreams] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     listActiveLives()
       .then((list) => {
         const arr = Array.isArray(list) ? list : [];
-        setStreams(arr.map((live: { id: string; host_id: string; host_display_name?: string | null; viewers_count?: number }, i: number) => mapLiveToStream(live, i)));
+        setStreams(arr.map((live, i) => mapLiveToStream(live, i)));
       })
       .catch(() => setStreams([]))
       .finally(() => setLoading(false));

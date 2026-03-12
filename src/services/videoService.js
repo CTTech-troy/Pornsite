@@ -1,4 +1,6 @@
 // frontend/src/services/videoService.js
+import { formatDuration, parseDurationToSeconds } from '../utils/formatDuration';
+
 async function fetchJson(url, options = {}) {
   const res = await fetch(url, options);
   const contentType = res.headers.get('content-type') || '';
@@ -14,24 +16,25 @@ async function fetchJson(url, options = {}) {
   }
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE || '';
+// no pornhub embed conversion here anymore
+
+const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || '';
+
+// No client-side scraper — rely on backend endpoints for trending/search results.
 
 /**
  * Fetch videos paginated from backend.
  * Returns an array of normalized video objects.
  */
-export async function fetchVideos({ page = 1, limit = 10 } = {}) {
-  const offset = Math.max((page - 1) * limit, 0);
-  const url = `${API_BASE}/videos?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`;
+export async function fetchVideos({ page = 1, limit = 20 } = {}) {
+  const pageNum = Math.max(1, Number(page) || 1);
+  const limitNum = Math.min(100, Math.max(1, Number(limit) || 20));
+  const url = `${API_BASE}/api/videos?page=${encodeURIComponent(pageNum)}&limit=${encodeURIComponent(limitNum)}`;
   try {
-    console.info('[videoService] fetchVideos -> url:', url);
     const res = await fetch(url, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
-    console.info('[videoService] fetchVideos -> raw response:', body);
-    // backend may return { success, data } or raw array
     const arr = Array.isArray(body) ? body : (body && body.data ? body.data : []);
-    console.info('[videoService] fetchVideos -> normalized array (length=' + (arr?.length || 0) + '):', arr);
     return Array.isArray(arr) ? arr : [];
   } catch (err) {
     console.error('[videoService] fetchVideos error', err);
@@ -40,23 +43,38 @@ export async function fetchVideos({ page = 1, limit = 10 } = {}) {
 }
 
 export async function searchVideos({ q = '', page = 1 } = {}) {
-  const url = `${API_BASE}/videos/search?q=${encodeURIComponent(q)}&page=${encodeURIComponent(page)}`;
+  const url = `${API_BASE}/api/videos/search?q=${encodeURIComponent(q)}&page=${encodeURIComponent(page)}`;
   try {
     const { status, body } = await fetchJson(url);
     if (status >= 400) throw new Error('Search returned status ' + status);
-    // Extract array from common keys
     const dataPart = body && (body.data || body.results || body.videos || body.items || body);
     return Array.isArray(dataPart) ? dataPart : [];
   } catch (err) {
     console.error('videoService.searchVideos error', err);
-    throw err;
+    return [];
   }
 }
 
-export async function getTrending(page = 1) {
-  // Trending endpoints removed from backend; return empty fallback to avoid 404s.
-  console.debug('videoService.getTrending: backend trending endpoints removed, returning empty list');
-  return [];
+export async function getTrending(page = 1, limit = 20) {
+  // Prefer backend trending endpoint; fallback to paginated feed.
+  try {
+    const items = await fetchVideos({ page, limit });
+    // Map backend's shape to the UI-friendly shape if necessary
+    return Array.isArray(items)
+      ? items.map((it) => ({
+        id: it.id || it.videoId || it.video_id || it.url || String(Math.random()).slice(2),
+        title: it.title || it.name || '',
+        channel: it.channel || it.uploader || it.author || '',
+        thumbnail: it.thumbnail || it.thumbnailUrl || it.preview || '',
+        video_url: it.video_url || it.videoUrl || it.url || it.videoSrc || '',
+        duration: formatDuration(it.duration ?? it.length),
+        durationSeconds: parseDurationToSeconds(it.duration ?? it.length) || 0,
+      }))
+      : [];
+  } catch (err) {
+    console.error('videoService.getTrending error', err);
+    return [];
+  }
 }
 
 export async function downloadVideo(videoLink) {
@@ -72,11 +90,10 @@ export async function downloadVideo(videoLink) {
 }
 
 export async function getVideoById(videoId) {
-  const url = `${API_BASE}/videos/video/${encodeURIComponent(videoId)}`;
+  const url = `${API_BASE}/api/videos/${encodeURIComponent(videoId)}`;
   try {
     const { status, body } = await fetchJson(url);
     if (status >= 400) throw new Error('Get video by ID failed ' + status);
-    // Extract from response object that has { ok: true, data: {...} } or just return the full body
     return body && body.data ? body.data : body;
   } catch (err) {
     console.error('videoService.getVideoById error', err);

@@ -16,17 +16,22 @@ export async function getCreators(limit = 100) {
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || data.error || res.statusText || 'Failed');
-  return data.data || [];
+  const list = data.data;
+  return Array.isArray(list) ? list : [];
 }
 
 /**
  * GET /api/creators/:slug — creator profile + videos.
+ * On 429 throws so UI can show "Rate limit exceeded".
  */
 export async function getCreatorBySlug(slug) {
   if (!slug) return null;
   const url = apiUrl(`/api/creators/${encodeURIComponent(slug)}`);
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));
+  if (res.status === 429) {
+    throw new Error('Rate limit exceeded. Please try again in a few minutes.');
+  }
   if (!res.ok) return null;
   return data.data || null;
 }

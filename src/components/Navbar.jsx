@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { Search, User, Menu, X, Clock, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -13,8 +14,18 @@ export default function Navbar({
   onHomeClick,
   creatorStatus,
   hasActiveLive,
+  onGoLive,
+  activeLiveId,
   onSearch
 }) {
+  const isCreator = creatorStatus === 'approved';
+  const handleGoLiveClick = () => {
+    if (hasActiveLive && activeLiveId && onProfileClick) {
+      onProfileClick();
+    } else if (onGoLive) {
+      onGoLive(null);
+    }
+  };
   const handleProfileClick = () => {
     if (onProfileClick) onProfileClick();
     else if (onDashboardClick) onDashboardClick();
@@ -74,18 +85,28 @@ export default function Navbar({
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
         {/* Logo */}
         <div
-          className="flex items-center gap-2 flex-shrink-0 cursor-pointer"
-          onClick={() => {
-            if (onHomeClick) onHomeClick();else
-            window.location.reload();
-          }}>
-
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF4654] to-[#FF7043] flex items-center justify-center text-white font-black text-xl shadow-lg shadow-red-200/30">
-            L
+          className="flex items-center gap-4 flex-shrink-0"
+        >
+          <div
+            className="flex items-center gap-2 cursor-pointer"
+            onClick={() => {
+              if (onHomeClick) onHomeClick();
+              else window.location.reload();
+            }}
+          >
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF4654] to-[#FF7043] flex items-center justify-center text-white font-black text-xl shadow-lg shadow-red-200/30">
+              L
+            </div>
+            <span className="text-2xl font-black tracking-tight text-[#1A1A2E] hidden md:block">
+              Let<span className="text-[#FF4654]">Stream</span>
+            </span>
           </div>
-          <span className="text-2xl font-black tracking-tight text-[#1A1A2E] hidden md:block">
-           Let<span className="text-[#FF4654]">Stream</span>
-          </span>
+          <Link
+            to="/tiktok"
+            className="text-sm font-bold text-gray-600 hover:text-[#FF4654] transition-colors hidden md:block"
+          >
+            Shorts
+          </Link>
         </div>
 
         {/* Search Bar - Desktop */}
@@ -218,6 +239,19 @@ export default function Navbar({
 
         {/* Actions */}
         <div className="flex items-center gap-3 md:gap-4 flex-shrink-0">
+          {isCreator && (
+            <button
+              type="button"
+              onClick={handleGoLiveClick}
+              className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${
+                hasActiveLive
+                  ? 'bg-red-500/10 text-red-600 border border-red-500/50 hover:bg-red-500/20'
+                  : 'bg-[#FF4654] text-white hover:bg-[#FF7043]'
+              }`}
+            >
+              {hasActiveLive ? 'Back to Live' : 'Go Live'}
+            </button>
+          )}
           {isAuthenticated ?
           <button
             onClick={handleProfileClick}

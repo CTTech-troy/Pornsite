@@ -15,11 +15,12 @@ import {
   ChevronDown,
   ChevronUp,
   CheckCircle2,
-  Loader2 } from
-'lucide-react';
+  Loader2
+} from
+  'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AdBanner from './AdBanner';
-import  VideoCard  from './VideoCard.jsx';
+import VideoCard from './VideoCard.jsx';
 
 export default function VideoPage({
   video,
@@ -33,11 +34,18 @@ export default function VideoPage({
   onVideoClick,
   getToken,
 }) {
-  const stableVideoId = (videoIdProp || getPathSafeVideoId(video?.id) || video?.id || '').toString().trim();
+  const [activeVideo, setActiveVideo] = useState(video);
+  useEffect(() => {
+    if (video?.id !== activeVideo?.id) {
+      setActiveVideo(video);
+    }
+  }, [video?.id]);
+
+  const stableVideoId = (videoIdProp || getPathSafeVideoId(activeVideo?.id) || activeVideo?.id || '').toString().trim();
   const interactions = usePublicVideoInteractions(stableVideoId || null, {
     getToken: getToken || undefined,
-    initialLikes: Number(video?.likes) || 0,
-    initialTotalComments: Number(video?.comments) || 0,
+    initialLikes: Number(activeVideo?.likes) || 0,
+    initialTotalComments: Number(activeVideo?.comments) || 0,
   });
 
   const likes = interactions.likes;
@@ -63,30 +71,130 @@ export default function VideoPage({
   const [adEndedOrSkipped, setAdEndedOrSkipped] = useState(false);
   const [mainPlaying, setMainPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [isAdBuffering, setIsAdBuffering] = useState(false);
   const [shareToast, setShareToast] = useState(false);
   const adVideoRef = useRef(null);
   const mainVideoRef = useRef(null);
   const skipTimerRef = useRef(null);
-  const relatedVideos = (relatedVideosProp && relatedVideosProp.length > 0)
+  const [fetchedRelated, setFetchedRelated] = useState([]);
+  const [fetchingRelated, setFetchingRelated] = useState(false);
+
+  useEffect(() => {
+    const fetchRelated = async () => {
+      if (!activeVideo) return;
+      const tags = activeVideo.tags || [];
+      const query = tags.length > 0 ? tags[0] : (activeVideo.category || 'trending');
+      try {
+        setFetchingRelated(true);
+        const endpoint = `https://pornhub2.p.rapidapi.com/v2/video/search?q=${encodeURIComponent(query)}&page=1`;
+        const res = await fetch(endpoint, {
+          headers: {
+            'x-rapidapi-key': import.meta.env.VITE_RAPIDAPI_KEY || 'YOUR_API_KEY',
+            'x-rapidapi-host': 'pornhub2.p.rapidapi.com'
+          }
+        });
+        const data = await res.json();
+        if (data && data.data) {
+          const items = data.data;
+          // Shuffle the array elements randomly
+          for (let i = items.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [items[i], items[j]] = [items[j], items[i]];
+          }
+
+          const mapped = items.map(v => ({
+            id: v.id,
+            title: v.title || 'Video',
+            channel: v.channel || 'Creator',
+            views: v.views ?? 0,
+            thumbnail: v.thumbnailUrl || v.thumbnail || '',
+            duration: formatDuration(v.duration),
+            durationSeconds: parseDurationToSeconds(v.duration) || Number(v.duration) || 0,
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(v.id)}`,
+            videoSrc: v.videoUrl || '',
+            likes: '0',
+            comments: '0',
+            description: v.title || ''
+          })).filter(v => v.id !== activeVideo?.id).slice(0, 6);
+          setFetchedRelated(mapped);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch related', e);
+      } finally {
+        setFetchingRelated(false);
+      }
+    };
+    // only run when video changes
+    fetchRelated();
+  }, [activeVideo?.id]);
+
+  const relatedVideosToDisplay = fetchedRelated.length > 0 ? fetchedRelated : ((relatedVideosProp && relatedVideosProp.length > 0)
     ? relatedVideosProp
-    : (video?.related || []).filter((v) => v.id !== video?.id).slice(0, 6);
-  const isExternalVideo = !video?.source || video?.source !== 'rtdb';
+    : (activeVideo?.related || []).filter((v) => v.id !== activeVideo?.id).slice(0, 6));
+
+  const isExternalVideo = !activeVideo?.source || activeVideo?.source !== 'rtdb';
 
   const AD_VIDEO_URL = import.meta.env.VITE_AD_VIDEO_URL || '';
-  const playerSource = resolvePlayerSource(video || {});
-  const mainVideoSrc = playerSource.mode === 'video' ? playerSource.url : '';
+  const playerSource = resolvePlayerSource(activeVideo || {});
+  const initialMainVideoSrc = playerSource.mode === 'video' ? playerSource.url : '';
+  const [mainVideoSrcState, setMainVideoSrcState] = useState(initialMainVideoSrc);
   const embedUrl = playerSource.mode === 'iframe' ? (playerSource.embedUrl || playerSource.url) : '';
   const externalUrl = playerSource.mode === 'external' ? (playerSource.externalUrl || playerSource.url) : '';
-  const hasPlayableSource = playerSource.mode === 'video' || playerSource.mode === 'iframe';
-  const hasDirectStream = playerSource.mode === 'video';
+  const [embedUrlState, setEmbedUrlState] = useState(embedUrl);
+  const [controllerLoading, setControllerLoading] = useState(false);
+  const [controllerError, setControllerError] = useState(null);
+  const [controllerAttempted, setControllerAttempted] = useState(false);
+  useEffect(() => {
+    // Log resolved player source to help debug playback issues (CORS/embed restrictions, missing streams)
+    try {
+      console.debug('[VideoPage] playerSource resolved:', playerSource);
+      if (!mainVideoSrcState && !embedUrlState && !externalUrl) {
+        console.warn('[VideoPage] No playable source for video id:', stableVideoId, 'playerSource=', playerSource);
+      }
+    } catch (e) {
+      // ignore logging errors
+    }
+  }, [playerSource, mainVideoSrcState, embedUrlState, externalUrl, stableVideoId]);
+
+  // Auto-play the clicked video when the page loads (prefer direct stream).
+  useEffect(() => {
+    // Only attempt autoplay for direct streams; for embed players autoplay may be blocked.
+    if (!stableVideoId) return;
+    if (mainVideoSrcState) {
+      // mark ad as skipped/ended so the main video is visible
+      setAdEndedOrSkipped(true);
+      // try to play after a short delay so the element is mounted
+      const t = setTimeout(() => {
+        try {
+          // allow muted autoplay which browsers permit
+          if (mainVideoRef.current) mainVideoRef.current.muted = true;
+          setIsBuffering(true);
+          playMainVideo.current();
+        } catch (e) {
+          console.warn('Auto-play failed', e);
+        }
+      }, 120);
+      return () => clearTimeout(t);
+    }
+    // If no direct stream but we have an embed, let the iframe load — autoplay often blocked by browsers.
+  }, [stableVideoId, mainVideoSrcState, embedUrlState]);
+  const hasPlayableSource = Boolean(mainVideoSrcState) || Boolean(embedUrlState) || playerSource.mode === 'iframe';
+  const hasDirectStream = Boolean(mainVideoSrcState);
   const isExternalOnly = playerSource.mode === 'external';
   // Auto quality: when multiple sources exist (e.g. 1080p/720p/480p), pick by navigator.connection.effectiveType ('4g'→high, '3g'→mid, '2g'→low)
 
-  const playMainVideo = useRef(() => {});
-  playMainVideo.current = () => {
-    if (!mainVideoRef.current || !mainVideoSrc) return;
-    mainVideoRef.current.play().catch(console.warn);
-    setMainPlaying(true);
+  const playMainVideo = useRef(() => { });
+  playMainVideo.current = (userInitiated = false) => {
+    if (!mainVideoRef.current || !mainVideoSrcState) return;
+    // mark buffering until we get onPlaying/onCanPlay
+    setIsBuffering(true);
+    try {
+      if (userInitiated) mainVideoRef.current.muted = false;
+      mainVideoRef.current.play().catch((e) => console.warn(e));
+      setMainPlaying(true);
+    } catch (e) {
+      console.warn('playMainVideo error', e);
+    }
   };
 
   const stopAdAndPlayMain = () => {
@@ -99,32 +207,85 @@ export default function VideoPage({
       adVideoRef.current.currentTime = 0;
     }
     setIsAdPlaying(false);
+    setIsAdBuffering(false);
     setShowSkipButton(false);
     setAdEndedOrSkipped(true);
     recordVideoWatched();
     // Defer play so React can show the main video first (display:block)
     setTimeout(() => {
-      if (mainVideoRef.current && mainVideoSrc) {
-        mainVideoRef.current.play().catch(console.warn);
-        setMainPlaying(true);
+      if (mainVideoRef.current && mainVideoSrcState) {
+        setIsBuffering(true);
+        playMainVideo.current(true);
       }
     }, 80);
   };
 
   useEffect(() => {
-    if (!adEndedOrSkipped || !mainVideoSrc) return;
+    if (!adEndedOrSkipped || !mainVideoSrcState) return;
     const id = setTimeout(() => {
       if (mainVideoRef.current) {
-        mainVideoRef.current.play().catch(console.warn);
-        setMainPlaying(true);
+        setIsBuffering(true);
+        playMainVideo.current(true);
       }
     }, 80);
     return () => clearTimeout(id);
-  }, [adEndedOrSkipped, mainVideoSrc]);
+  }, [adEndedOrSkipped, mainVideoSrcState]);
+
+  // If the resolved source is an "external" page, attempt to ask the backend
+  // controller for a playable stream and play it in our player.
+  useEffect(() => {
+    if (!stableVideoId) return;
+    // Only try once per mount/navigation when we have an externalUrl and no main src
+    if (!externalUrl || mainVideoSrcState || controllerAttempted) return;
+    let aborted = false;
+    const abortController = new AbortController();
+    (async () => {
+      try {
+        setControllerAttempted(true);
+        setControllerLoading(true);
+        setControllerError(null);
+        // Backend endpoint expected to return JSON: { url: string }
+        const resp = await fetch(`/api/videos/stream/${stableVideoId}`, { signal: abortController.signal });
+        if (aborted) return;
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => '');
+          throw new Error(`Controller response ${resp.status} ${txt}`);
+        }
+        const data = await resp.json().catch(() => ({}));
+        if (data && data.url) {
+          const url = String(data.url || '');
+          // simple heuristic: if URL looks like a media file or HLS manifest, treat as direct stream
+          const mediaExtRe = /\.(mp4|webm|m3u8|mpd|mov|m4v)(\?|$)/i;
+          const isMedia = mediaExtRe.test(url) || url.includes('.m3u8') || url.includes('.mpd');
+          if (isMedia) {
+            setMainVideoSrcState(url);
+          } else {
+            // treat as embed/page URL — show in iframe when possible
+            setEmbedUrlState(url);
+          }
+          // ensure main area is visible
+          setAdEndedOrSkipped(true);
+        } else {
+          setControllerError('No stream returned from controller');
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.warn('Controller stream fetch failed', err);
+        setControllerError(String(err));
+      } finally {
+        setControllerLoading(false);
+      }
+    })();
+    return () => {
+      aborted = true;
+      abortController.abort();
+    };
+  }, [stableVideoId, externalUrl, mainVideoSrcState, controllerAttempted]);
 
   const handlePlayClick = () => {
     if (adEndedOrSkipped) {
-      playMainVideo.current();
+      // user-initiated play; unmute when attempting playback
+      playMainVideo.current(true);
       return;
     }
     const needAd = shouldShowAd && (AD_VIDEO_URL || true);
@@ -132,8 +293,22 @@ export default function VideoPage({
       if (AD_VIDEO_URL && adVideoRef.current) {
         setIsAdPlaying(true);
         setShowSkipButton(false);
-        adVideoRef.current.play().catch(console.warn);
-        skipTimerRef.current = setTimeout(() => setShowSkipButton(true), 5000);
+        // Attempt to autoplay the ad. If autoplay is blocked (promise rejects),
+        // fall back to the main video so playback isn't stuck.
+        adVideoRef.current.play()
+          .then(() => {
+            // ad started successfully; show skip button after 3s
+            skipTimerRef.current = setTimeout(() => setShowSkipButton(true), 3000);
+          })
+          .catch((err) => {
+            console.warn('Ad autoplay failed, skipping to main video:', err);
+            // ensure any timers are cleared and play main video
+            if (skipTimerRef.current) {
+              clearTimeout(skipTimerRef.current);
+              skipTimerRef.current = null;
+            }
+            stopAdAndPlayMain();
+          });
       } else {
         skipTimerRef.current = setTimeout(stopAdAndPlayMain, 5000);
         setIsAdPlaying(true);
@@ -206,14 +381,20 @@ export default function VideoPage({
         <div className="lg:col-span-2 lg:sticky lg:top-24">
           {/* Video Player: ad then main */}
           <div className={`aspect-video w-full rounded-2xl ${video.thumbnailColor || 'bg-gray-900'} shadow-xl relative overflow-hidden group mb-4`}>
-            {/* Ad video (shown when isAdPlaying and we have ad URL) */}
+            <AdBanner size="banner" className="my-2" />
+
             {AD_VIDEO_URL && (
               <video
                 ref={adVideoRef}
                 className="absolute inset-0 w-full h-full object-contain"
                 src={AD_VIDEO_URL}
+                preload="auto"
                 muted={false}
                 playsInline
+                onLoadStart={() => setIsAdBuffering(true)}
+                onWaiting={() => setIsAdBuffering(true)}
+                onPlaying={() => setIsAdBuffering(false)}
+                onCanPlay={() => setIsAdBuffering(false)}
                 onEnded={stopAdAndPlayMain}
                 style={{ display: isAdPlaying ? 'block' : 'none' }}
               />
@@ -225,13 +406,13 @@ export default function VideoPage({
               </div>
             )}
             {/* Main video (direct stream only) */}
-            {mainVideoSrc && (
+            {mainVideoSrcState && (
               <video
                 ref={mainVideoRef}
                 className="absolute inset-0 w-full h-full object-contain"
-                src={mainVideoSrc}
-                poster={video?.thumbnail}
-                controls={mainPlaying}
+                src={mainVideoSrcState}
+                poster={activeVideo?.thumbnail}
+                controls={true}
                 playsInline
                 onEnded={() => setMainPlaying(false)}
                 onWaiting={() => setIsBuffering(true)}
@@ -241,9 +422,9 @@ export default function VideoPage({
               />
             )}
             {/* Embed player when no direct stream but embed URL is available */}
-            {embedUrl && adEndedOrSkipped && (
+            {(embedUrlState || embedUrl) && adEndedOrSkipped && (
               <iframe
-                src={embedUrl}
+                src={embedUrlState || embedUrl}
                 className="absolute inset-0 w-full h-full rounded-2xl"
                 allowFullScreen
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -251,19 +432,37 @@ export default function VideoPage({
                 style={{ display: 'block' }}
               />
             )}
-            {/* Netflix-style buffering loader */}
+            {/* Controller loading / error overlay for external-only sources */}
+            {!hasPlayableSource && externalUrl && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                {controllerLoading ? (
+                  <div className="flex items-center gap-3 bg-black/60 text-white rounded-lg px-4 py-3">
+                    <div className="w-6 h-6 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                    <span>Loading video...</span>
+                  </div>
+                ) : controllerError ? (
+                  <div className="flex flex-col items-center gap-2 bg-white/90 rounded-lg p-4 shadow-md">
+                    <div className="text-sm text-gray-700">Unable to load video from controller</div>
+                    <div className="text-xs text-red-500">{controllerError}</div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-600 bg-white/80 rounded-lg px-4 py-2">Preparing video...</div>
+                )}
+              </div>
+            )}
+            {/* Netflix-style buffering loader (for ad or main video) */}
             <AnimatePresence>
-              {isBuffering && mainPlaying && (
+              {(isAdPlaying && isAdBuffering) || (mainPlaying && isBuffering) || controllerLoading ? (
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/20"
+                  className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/40 z-20"
                 >
-                  <div className="w-12 h-12 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  <Loader2 className="w-16 h-16 text-[#FF4654] animate-spin" />
                 </motion.div>
-              )}
+              ) : null}
             </AnimatePresence>
             {/* Play overlay (when nothing playing yet or before ad) */}
             {!adEndedOrSkipped && !mainPlaying && (
@@ -312,7 +511,7 @@ export default function VideoPage({
             {mainPlaying && (
               <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent pointer-events-none">
                 <div className="flex justify-between text-white text-sm font-medium">
-                  <span>{video.duration}</span>
+                  <span>{activeVideo.duration}</span>
                 </div>
               </div>
             )}
@@ -321,22 +520,22 @@ export default function VideoPage({
           {/* Video Info */}
           <div>
             <h1 className="text-xl md:text-2xl font-black text-[#1A1A2E] leading-tight mb-3">
-              {video.title}
+              {activeVideo.title}
             </h1>
 
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-gray-200">
               {!isExternalVideo && (
                 <div className="flex items-center gap-3">
                   <img
-                    src={video.avatar}
-                    alt={video.channel}
+                    src={activeVideo.avatar}
+                    alt={activeVideo.channel}
                     className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm cursor-pointer"
-                    onClick={() => onCreatorClick?.(video.channel)} />
+                    onClick={() => onCreatorClick?.(activeVideo.channel)} />
                   <div>
                     <h3
                       className="font-bold text-[#1A1A2E] hover:text-[#FF4654] cursor-pointer transition-colors"
-                      onClick={() => onCreatorClick?.(video.channel)}>
-                      {video.channel}
+                      onClick={() => onCreatorClick?.(activeVideo.channel)}>
+                      {activeVideo.channel}
                     </h3>
                     <p className="text-xs text-gray-500 font-medium">
                       1.2M subscribers
@@ -395,39 +594,39 @@ export default function VideoPage({
                     className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full font-bold text-sm transition-colors ${isAuthenticated ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}>
 
                     {downloadState === 'downloading' ?
-                    <Loader2 className="w-4 h-4 animate-spin" /> :
-                    isAuthenticated ?
-                    <Download className="w-4 h-4" /> :
+                      <Loader2 className="w-4 h-4 animate-spin" /> :
+                      isAuthenticated ?
+                        <Download className="w-4 h-4" /> :
 
-                    <Lock className="w-4 h-4" />
+                        <Lock className="w-4 h-4" />
                     }
                     <span>
                       {downloadState === 'downloading' ?
-                      'Downloading...' :
-                      'Download'}
+                        'Downloading...' :
+                        'Download'}
                     </span>
                   </button>
 
                   {/* Download Confirmation Overlay */}
                   <AnimatePresence>
                     {downloadState === 'complete' &&
-                    <motion.div
-                      initial={{
-                        opacity: 0,
-                        y: 10,
-                        scale: 0.9
-                      }}
-                      animate={{
-                        opacity: 1,
-                        y: 0,
-                        scale: 1
-                      }}
-                      exit={{
-                        opacity: 0,
-                        y: 10,
-                        scale: 0.9
-                      }}
-                      className="absolute top-full right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-gray-100 p-3 z-50">
+                      <motion.div
+                        initial={{
+                          opacity: 0,
+                          y: 10,
+                          scale: 0.9
+                        }}
+                        animate={{
+                          opacity: 1,
+                          y: 0,
+                          scale: 1
+                        }}
+                        exit={{
+                          opacity: 0,
+                          y: 10,
+                          scale: 0.9
+                        }}
+                        className="absolute top-full right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-gray-100 p-3 z-50">
 
                         <div className="flex items-start gap-3">
                           <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
@@ -454,14 +653,14 @@ export default function VideoPage({
             <div className="mt-5 bg-white rounded-2xl p-4 text-sm text-gray-700 leading-relaxed shadow-sm border border-gray-100">
               <div className="flex gap-3 font-bold text-[#1A1A2E] mb-2 text-xs">
                 <span>{views.toLocaleString()} views</span>
-                <span>{video.time}</span>
+                <span>{activeVideo.time}</span>
               </div>
               <p>
-                {(video.source === 'rtdb' && (video.description || '').trim())
-                  ? video.description
-                  : (video.description || '').trim()
-                    ? video.description
-                    : descriptionFromTitle(video.title)}
+                {(activeVideo.source === 'rtdb' && (activeVideo.description || '').trim())
+                  ? activeVideo.description
+                  : (activeVideo.description || '').trim()
+                    ? activeVideo.description
+                    : descriptionFromTitle(activeVideo.title)}
               </p>
             </div>
 
@@ -477,17 +676,17 @@ export default function VideoPage({
                     {interactions.totalComments} Comments
                   </h3>
                   {showComments ?
-                  <ChevronUp className="w-4 h-4 text-gray-500" /> :
+                    <ChevronUp className="w-4 h-4 text-gray-500" /> :
 
-                  <ChevronDown className="w-4 h-4 text-gray-500" />
+                    <ChevronDown className="w-4 h-4 text-gray-500" />
                   }
                 </div>
                 {!showComments && comments.length > 0 &&
-                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
                     <img
-                    src={comments[0].avatar}
-                    alt=""
-                    className="w-5 h-5 rounded-full" />
+                      src={comments[0].avatar}
+                      alt=""
+                      className="w-5 h-5 rounded-full" />
 
                     <span className="truncate">{comments[0].text}</span>
                   </div>
@@ -497,20 +696,20 @@ export default function VideoPage({
               {/* Full Comments */}
               <AnimatePresence>
                 {showComments &&
-                <motion.div
-                  initial={{
-                    height: 0,
-                    opacity: 0
-                  }}
-                  animate={{
-                    height: 'auto',
-                    opacity: 1
-                  }}
-                  exit={{
-                    height: 0,
-                    opacity: 0
-                  }}
-                  className="overflow-hidden">
+                  <motion.div
+                    initial={{
+                      height: 0,
+                      opacity: 0
+                    }}
+                    animate={{
+                      height: 'auto',
+                      opacity: 1
+                    }}
+                    exit={{
+                      height: 0,
+                      opacity: 0
+                    }}
+                    className="overflow-hidden">
 
                     <div className="pt-4">
                       {/* Add Comment */}
@@ -555,14 +754,14 @@ export default function VideoPage({
                       {/* Comments List */}
                       <div className="space-y-4">
                         {comments.map((comment) =>
-                      <div
-                        key={comment.id}
-                        className="flex gap-3 bg-white rounded-xl p-3 shadow-sm border border-gray-100">
+                          <div
+                            key={comment.id}
+                            className="flex gap-3 bg-white rounded-xl p-3 shadow-sm border border-gray-100">
 
                             <img
-                          src={comment.avatar}
-                          alt={comment.author}
-                          className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                              src={comment.avatar}
+                              alt={comment.author}
+                              className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
 
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-0.5">
@@ -587,7 +786,7 @@ export default function VideoPage({
                               </div>
                             </div>
                           </div>
-                      )}
+                        )}
                       </div>
                     </div>
                   </motion.div>
@@ -600,14 +799,14 @@ export default function VideoPage({
         {/* Sidebar (Related Videos) */}
         <div className="lg:col-span-1">
           <h3 className="font-black text-[#1A1A2E] mb-4 text-lg">
-            Related Videos
+            Related Videos {fetchingRelated && <Loader2 className="inline ml-2 w-4 h-4 animate-spin text-gray-500" />}
           </h3>
           <div className="flex flex-col gap-4">
-            {relatedVideos.map((relatedVideo, index) =>
-            <Fragment key={relatedVideo.id}>
+            {relatedVideosToDisplay.map((relatedVideo, index) =>
+              <Fragment key={relatedVideo.id}>
                 <VideoCard
-                {...relatedVideo}
-                onClick={() => onVideoClick?.(relatedVideo)} />
+                  {...relatedVideo}
+                  onClick={() => onVideoClick?.(relatedVideo)} />
 
                 {/* Insert Ad after 3rd video */}
                 {index === 2 && <AdBanner size="banner" className="my-2" />}

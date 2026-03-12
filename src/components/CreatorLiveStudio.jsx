@@ -17,7 +17,7 @@ import {
   Home,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { createLive, getLive, getMyActiveLive } from '../api/liveApi';
+import { createLive, getLive, getMyActiveLive, endLive } from '../api/liveApi';
 import { connectSocket, emit, on, off } from '../api/socket';
 
 const COMMENT_COLORS = ['text-blue-400', 'text-green-400', 'text-purple-400', 'text-orange-400', 'text-pink-400'];
@@ -42,21 +42,46 @@ export default function CreatorLiveStudio({ user, onBack, initialLiveId }) {
   const [showMobileChat, setShowMobileChat] = useState(true);
   const [endPayout, setEndPayout] = useState(null);
   const [goLiveError, setGoLiveError] = useState(null);
+  const [existingLiveId, setExistingLiveId] = useState(null);
+  const [endingExisting, setEndingExisting] = useState(false);
   const [resumeLoading, setResumeLoading] = useState(!!initialLiveId);
+  const [mediaError, setMediaError] = useState(null); // e.g. camera/mic permission denied
   const chatRef = useRef(null);
   const mobileChatRef = useRef(null);
   const videoRef = useRef(null);
   const videoRefDesktop = useRef(null);
   const streamRef = useRef(null);
 
-  // Resume existing live when initialLiveId is provided
+  // Resume existing live when initialLiveId is provided or when user has an active live
   useEffect(() => {
-    if (!initialLiveId || !hostId) {
-      setResumeLoading(false);
-      return;
+    let cancelled = false;
+    async function tryResume(idToLoad) {
+      try {
+        const live = idToLoad ? await getLive(idToLoad) : null;
+        if (!live && hostId) {
+          // ask API for any active live for this host
+          const active = await getMyActiveLive(hostId).catch(() => null);
+          if (active?.id) {
+            // load the active live by id
+            return active;
+          }
+          return null;
+        }
+        return live;
+      } catch (e) {
+        return null;
+      }
     }
-    getLive(initialLiveId)
-      .then((live) => {
+
+    (async () => {
+      if (!hostId) {
+        setResumeLoading(false);
+        return;
+      }
+      setResumeLoading(true);
+      try {
+        const live = await tryResume(initialLiveId);
+        if (cancelled) return;
         if (live && (live.status === 'live' || live.status === 'paused')) {
           setLiveId(live.id);
           setLiveCreatedAt(live.created_at || new Date().toISOString());
@@ -69,9 +94,14 @@ export default function CreatorLiveStudio({ user, onBack, initialLiveId }) {
           connectSocket();
           emit('join-live', { liveId: live.id, userId: hostId });
         }
-      })
-      .catch(() => setGoLiveError('Could not load your live session'))
-      .finally(() => setResumeLoading(false));
+      } catch (err) {
+        setGoLiveError('Could not load your live session');
+      } finally {
+        if (!cancelled) setResumeLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [initialLiveId, hostId]);
 
   // Timer for live duration from live start
@@ -152,7 +182,9 @@ export default function CreatorLiveStudio({ user, onBack, initialLiveId }) {
     try {
       const existing = await getMyActiveLive(hostId);
       if (existing?.id) {
-        setGoLiveError('You already have an active live. End it before starting another.');
+        // don't auto-create; surface the existing live and allow ending it
+        setExistingLiveId(existing.id);
+        setGoLiveError('You must end your current live stream before starting another.');
         return;
       }
       const live = await createLive(hostId, displayName);
@@ -171,6 +203,28 @@ export default function CreatorLiveStudio({ user, onBack, initialLiveId }) {
       emit('join-live', { liveId: id, userId: hostId });
     } catch (err) {
       setGoLiveError(err?.message || 'Go live failed');
+    }
+  };
+
+  const handleEndExistingLive = async () => {
+    if (!existingLiveId) return;
+    setEndingExisting(true);
+    try {
+      const payout = await endLive(existingLiveId);
+      // show payout modal like normal end flow
+      setEndPayout(payout || null);
+      // clear existing live marker and any errors
+      setExistingLiveId(null);
+      setGoLiveError(null);
+      // ensure studio reflects ended state
+      setIsLive(false);
+      setIsPaused(false);
+      setLiveId(null);
+      // notify server sockets if needed (server will broadcast)
+    } catch (err) {
+      setGoLiveError(err?.message || 'Failed to end existing live');
+    } finally {
+      setEndingExisting(false);
     }
   };
 
@@ -203,18 +257,46 @@ export default function CreatorLiveStudio({ user, onBack, initialLiveId }) {
   };
 
   const handleExitStudio = () => {
-    if (isLive) setShowExitModal(true);
-    else onBack();
+    if (isLive && liveId) {
+      // Immediately terminate the live session when Exit is clicked
+      (async () => {
+        try {
+          // notify sockets
+          try { emit('end-live', { liveId }); } catch (e) { /* ignore socket errors */ }
+          // attempt backend finalization (payouts)
+          const payout = await endLive(liveId).catch(() => null);
+          setEndPayout(payout || null);
+        } catch (err) {
+          console.warn('Error ending live on exit:', err);
+          setGoLiveError(err?.message || 'Failed to end live');
+        } finally {
+          setIsLive(false);
+          setIsPaused(false);
+          setElapsedTime(0);
+          setLiveId(null);
+          setShowExitModal(false);
+          onBack();
+        }
+      })();
+    } else onBack();
   };
 
   // Camera: getUserMedia and attach to video(s)
   useEffect(() => {
     if (!cameraEnabled) return;
+    setMediaError(null);
     const constraints = { video: { facingMode: frontCamera ? 'user' : 'environment' }, audio: micEnabled };
     navigator.mediaDevices?.getUserMedia(constraints).then((stream) => {
+      setMediaError(null);
       streamRef.current = stream;
       [videoRef.current, videoRefDesktop.current].forEach((el) => { if (el) el.srcObject = stream; });
-    }).catch((err) => console.warn('getUserMedia failed', err));
+    }).catch((err) => {
+      console.warn('getUserMedia failed', err);
+      const isPermission = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
+      setMediaError(isPermission
+        ? 'Camera or microphone access was denied. Allow access in your browser to go live.'
+        : (err?.message || 'Could not access camera or microphone.'));
+    });
     return () => {
       streamRef.current?.getTracks?.().forEach((t) => t.stop());
       streamRef.current = null;
@@ -273,8 +355,26 @@ export default function CreatorLiveStudio({ user, onBack, initialLiveId }) {
 
       {goLiveError && (
         <div className="mx-4 mt-2 px-4 py-2 bg-red-500/20 border border-red-500/50 rounded-lg text-red-200 text-sm flex items-center justify-between gap-2">
-          <span>{goLiveError}</span>
-          <button type="button" onClick={() => setGoLiveError(null)} className="text-white/80 hover:text-white">×</button>
+              <div className="flex items-center gap-4">
+                <span>{goLiveError}</span>
+                {existingLiveId && (
+                  <button
+                    type="button"
+                    onClick={handleEndExistingLive}
+                    disabled={endingExisting}
+                    className="ml-2 px-3 py-1 rounded-full bg-white text-[#1A1A2E] text-sm font-bold hover:opacity-90 transition-colors">
+                    {endingExisting ? 'Ending...' : 'End existing live'}
+                  </button>
+                )}
+              </div>
+              <button type="button" onClick={() => { setGoLiveError(null); setExistingLiveId(null); }} className="text-white/80 hover:text-white">×</button>
+        </div>
+      )}
+
+      {mediaError && (
+        <div className="mx-4 mt-2 px-4 py-2 bg-amber-500/20 border border-amber-500/50 rounded-lg text-amber-200 text-sm flex items-center justify-between gap-2">
+          <span>{mediaError}</span>
+          <button type="button" onClick={() => setMediaError(null)} className="text-white/80 hover:text-white">×</button>
         </div>
       )}
 

@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Sparkles } from 'lucide-react';
 import VideoCard from './VideoCard';
+import { formatDuration, parseDurationToSeconds } from '../utils/formatDuration';
 import { searchVideos, getTrending } from '../services/videoService';
 
 export default function VideoGrid({
@@ -15,10 +16,10 @@ export default function VideoGrid({
   const [videos, setVideos] = useState([
     ...userUploadedVideos
   ]);
+  // keep prop available (silence linter if unused)
+  void remoteApi;
   const [loading, setLoading] = useState(false);
-  const [remoteLoading, setRemoteLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [remoteError, setRemoteError] = useState(null);
   const observerTarget = useRef(null);
   const fetchingRef = useRef(false); // prevents concurrent requests
   // Smart search: exact matches first, then fuzzy/suggested
@@ -62,16 +63,18 @@ export default function VideoGrid({
   // Do not render video cards without an active thumbnail
   const displayVideosWithThumbnail = displayVideos.filter(
     (v) =>
-      (v.thumbnail && String(v.thumbnail).trim() !== '') ||
-      (v.thumbnailUrl && String(v.thumbnailUrl || '').trim() !== '')
+      v &&
+      ((v.thumbnail && String(v.thumbnail).trim() !== '') ||
+        (v.thumbnailUrl && String(v.thumbnailUrl || '').trim() !== ''))
   );
   const hasExactMatches =
   searchQuery &&
   displayVideosWithThumbnail.some((v) => {
+    if (!v) return false;
     const q = searchQuery.toLowerCase();
-    return (
-      v.title.toLowerCase().includes(q) || v.channel.toLowerCase().includes(q));
-
+    const title = (v.title || '').toLowerCase();
+    const channel = (v.channel || '').toLowerCase();
+    return title.includes(q) || channel.includes(q);
   });
   // Infinite scroll logic
   useEffect(() => {
@@ -85,13 +88,10 @@ export default function VideoGrid({
         threshold: 0.1
       }
     );
-    if (observerTarget.current) {
-      observer.observe(observerTarget.current);
-    }
+    const target = observerTarget.current;
+    if (target) observer.observe(target);
     return () => {
-      if (observerTarget.current) {
-        observer.unobserve(observerTarget.current);
-      }
+      if (target) observer.unobserve(target);
     };
   }, [loading, videos, searchQuery]);
   // Update videos when user uploads new ones
@@ -101,53 +101,44 @@ export default function VideoGrid({
     }
   }, [userUploadedVideos]);
 
-  // compute API URL: prefer explicit prop -> VITE_API_URL env var -> dev default -> same-origin
-  const apiBase =
-    (import.meta.env && import.meta.env.VITE_API_URL) ||
-    (import.meta.env?.DEV ? 'http://localhost:5000' : '') ||
-    '';
-  const apiUrl =
-    remoteApi ||
-    (apiBase ? `${String(apiBase).replace(/\/$/, '')}/api/videos/search` : '/api/videos/search');
   // Fetch remote videos from backend when useRemote is true
   useEffect(() => {
     let mounted = true;
     async function loadRemote(q, currentPage) {
       if (!useRemote || fetchingRef.current || !mounted) return;
       fetchingRef.current = true;
-      setRemoteLoading(true);
       try {
         console.info(`[VideoGrid] loadRemote start page=${currentPage} query="${q}"`);
         let items = [];
-        if (remoteApi === 'pornhub' || String(apiUrl).includes('pornhub')) {
-          items = await getTrending(currentPage);
-        } else if (q) {
+        if (q) {
           // respect search queries
-          items = await searchVideos({ q, page: currentPage });
+          items = await searchVideos({ q, page: currentPage || page });
         } else {
-          items = await fetchVideos({ page: currentPage, limit: 10 });
+          // default to backend trending/fetch
+          items = await getTrending(currentPage || page, 20);
         }
 
         console.info(`[VideoGrid] loadRemote -> raw items (page=${currentPage}):`, items);
         if (!mounted) return;
-
-        setRemoteError(null);
         const raw = Array.isArray(items) ? items : [];
 
         if (!raw.length) {
           console.warn(`[VideoGrid] No remote items returned by service (page=${currentPage}). raw.length=0`);
         }
 
-        // Map into UI shape expected by VideoCard
+        // Map into UI shape expected by VideoCard (allow missing video_url so card still shows title/thumb)
         const remoteVideos = raw.map((it) => {
-          if (!it || !it.thumbnail || !it.video_url) return null;
+          if (!it || typeof it !== 'object') return null;
+          const thumb = it.thumbnail || it.thumbnailUrl || it.thumb || '';
+          if (!thumb || String(thumb).trim() === '') return null;
           return {
-            id: it.id,
-            title: it.title,
-            channel: it.channel || it.uploader || '',
-            thumbnail: it.thumbnail,
-            videoSrc: it.video_url,
-            duration: it.duration || ''
+            id: it.id ?? it.videoId ?? it.video_id ?? `remote-${Math.random().toString(36).slice(2)}`,
+            title: it.title || it.name || '',
+            channel: it.channel || it.uploader || it.author || '',
+            thumbnail: thumb,
+            videoSrc: it.video_url || it.videoUrl || it.url || it.videoSrc || '',
+            duration: formatDuration(it.duration ?? it.length),
+            durationSeconds: parseDurationToSeconds(it.duration ?? it.length) || 0,
           };
         }).filter(Boolean);
 
@@ -160,25 +151,23 @@ export default function VideoGrid({
         });
       } catch (err) {
         console.error('Failed fetching remote videos', err);
-        if (mounted) setRemoteError(err && err.message ? err.message : String(err));
       } finally {
         fetchingRef.current = false;
-        if (mounted) setRemoteLoading(false);
+        if (mounted) setLoading(false);
       }
     }
 
     if (useRemote) {
       // don't default to 'trending' — request whatever query the caller provided (may be empty)
-      loadRemote(searchQuery);
+      loadRemote(searchQuery, page);
     }
     return () => { mounted = false; };
   }, [useRemote, searchQuery, page]);
   const loadMoreVideos = () => {
-    // trigger next page load
+    // trigger next page load (guard against concurrent requests)
+    if (fetchingRef.current) return;
     setLoading(true);
     setPage((p) => p + 1);
-    // loading flag will be cleared by the remote fetch finally block
-    setTimeout(() => setLoading(false), 500);
   };
   return (
     <div className="flex-1">
@@ -219,8 +208,7 @@ export default function VideoGrid({
           }
         }}>
 
-        {videos.length === 0 ? (
-          // Show skeleton placeholders while initial remote load is in progress
+        {videos.length === 0 && loading ? (
           Array.from({ length: 6 }).map((_, i) => (
             <div key={`skeleton-${i}`} className="animate-pulse">
               <div className="bg-gray-200 rounded-xl aspect-video w-full mb-2" />
@@ -233,10 +221,14 @@ export default function VideoGrid({
               </div>
             </div>
           ))
+        ) : displayVideosWithThumbnail.length === 0 ? (
+          <div className="col-span-full py-12 text-center text-gray-500">
+            No videos available.
+          </div>
         ) : (
-          displayVideosWithThumbnail.map((video, index) =>
+          displayVideosWithThumbnail.map((video) =>
         <motion.div
-          key={`${video.id}-${index}`}
+          key={String(video.id)}
           variants={{
             hidden: {
               opacity: 0,
@@ -256,7 +248,7 @@ export default function VideoGrid({
 
       {/* Loading Sentinel - only show if not searching */}
       {!searchQuery &&
-      <div ref={observerTarget} className="w-full py-8 flex justify-center">
+      <div id="load-more" ref={observerTarget} className="w-full py-8 flex justify-center">
           {loading &&
         <div className="flex gap-2">
               <div className="w-3 h-3 bg-[#FF4654] rounded-full animate-bounce"></div>

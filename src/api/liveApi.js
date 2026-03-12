@@ -30,8 +30,9 @@ export async function createLive(hostId, hostDisplayName = null) {
 
 export async function getMyActiveLive(hostId) {
   if (!hostId) return null;
-  const { data } = await request(`/api/live/my-active?hostId=${encodeURIComponent(hostId)}`);
-  return data;
+  const resp = await request(`/api/live/my-active?hostId=${encodeURIComponent(hostId)}`);
+  const data = resp?.data;
+  return data ?? null;
 }
 
 export async function getLive(id) {
@@ -42,6 +43,13 @@ export async function getLive(id) {
 export async function listActiveLives() {
   const { data } = await request('/api/live?status=live');
   return data;
+}
+
+export async function endLive(liveId) {
+  if (!liveId) throw new Error('missing liveId');
+  const resp = await request(`/api/live/${encodeURIComponent(liveId)}/end`, { method: 'POST' });
+  // backend returns { ok: true, payout } — return payout when present
+  return resp.payout ?? resp.data ?? null;
 }
 
 export async function getGiftCatalog() {

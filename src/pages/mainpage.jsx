@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import  Navbar  from '../components/Navbar';
-import  LiveNowSection  from '../components/LiveNowSection';
+import  LiveNowSection  from '../components/LiveNowSection.jsx';
 import VideoFeed from '../components/VideoFeed';
 import  Sidebar  from '../components/Sidebar';
 import  Dashboard  from '../components/Dashboard';
@@ -12,10 +12,8 @@ import  LiveStreamPage  from '../components/LiveStreamPage';
 import  CreatorApplicationModal  from '../components/CreatorApplicationModal';
 import CreatorApplicationPage from '../pages/CreatorApplicationPage';
 import  CreatorLiveStudio  from '../components/CreatorLiveStudio';
-import TopCreatorsSection from '../components/TopCreatorsSection';
 import { useAuth } from '../hooks/useAuth';
 import { getMyActiveLive } from '../api/liveApi';
-import { getCreators } from '../api/creatorsApi';
 import { useNavigate } from 'react-router-dom';
 import { getPathSafeVideoId } from '../utils/videoId';
 
@@ -44,16 +42,7 @@ export default function MainPage() {
   const [initialLiveIdForStudio, setInitialLiveIdForStudio] = useState(null);
   const [myActiveLive, setMyActiveLive] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [topCreators, setTopCreators] = useState([]);
-  const [creatorsLoading, setCreatorsLoading] = useState(true);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    getCreators(100)
-      .then((list) => setTopCreators(Array.isArray(list) ? list : []))
-      .catch(() => setTopCreators([]))
-      .finally(() => setCreatorsLoading(false));
-  }, []);
 
   const hasCreatorPrivileges = user?.creator === true || user?.creatorStatus === 'approved';
   useEffect(() => {
@@ -125,15 +114,14 @@ export default function MainPage() {
     window.scrollTo(0, 0);
   };
   const handleCreatorClick = (creator) => {
-    // Normalize creator data since it might come from different sources
+    const name = creator?.name ?? creator?.star_name ?? (typeof creator === 'string' ? creator : '');
     const profileData = {
-      name: creator.name || creator,
-      avatar:
-      creator.avatar ||
-      `https://api.dicebear.com/7.x/avataaars/svg?seed=${creator.name || creator}`,
-      followers: creator.followers || '1.2M',
-      bio: creator.bio,
-      coverImage: creator.coverImage
+      name: name || 'Creator',
+      avatar: creator?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name || 'creator')}`,
+      followers: creator?.followers || '—',
+      bio: creator?.bio,
+      coverImage: creator?.coverImage,
+      searchTerm: name || (typeof creator === 'string' ? creator : ''),
     };
     setCurrentPublicProfile(profileData);
     setCurrentLiveStream(null);
@@ -151,13 +139,11 @@ export default function MainPage() {
   };
   const handleSearch = (query) => {
     setSearchQuery(query);
-    // If we're not on home, go to home to show results
     if (
-    currentVideo ||
-    currentPublicProfile ||
-    currentLiveStream ||
-    showDashboard)
-    {
+      currentPublicProfile ||
+      currentLiveStream ||
+      showDashboard
+    ) {
       handleBackToFeed();
     }
   };
@@ -200,8 +186,10 @@ export default function MainPage() {
           onProfileClick={handleProfileClick}
           onUploadClick={handleUploadClick}
           onHomeClick={handleBackToFeed}
+          onGoLive={handleGoLive}
           creatorStatus={hasCreatorPrivileges ? 'approved' : user?.creatorStatus}
           hasActiveLive={!!myActiveLive?.id}
+          activeLiveId={myActiveLive?.id}
           onSearch={handleSearch} />
 
         {showDashboard && user ? (
@@ -223,11 +211,11 @@ export default function MainPage() {
           <PublicProfile
             creator={currentPublicProfile}
             videos={uploadedVideos.length > 0 ? uploadedVideos : []}
+            searchTerm={currentPublicProfile.searchTerm || null}
             onBack={handleBackToFeed}
             onVideoClick={handleVideoClick} />
         ) : (
           <main className="max-w-7xl mx-auto px-4 pb-12">
-            {/* <TopCreatorsSection creators={topCreators} loading={creatorsLoading} /> */}
             <LiveNowSection onStreamClick={handleLiveStreamClick} />
 
             <AdBanner size="leaderboard" />

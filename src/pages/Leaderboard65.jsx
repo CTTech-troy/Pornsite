@@ -93,7 +93,7 @@ export default function Leaderboard65() {
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {items.map((c, index) => (
               <button
-                key={c.id || c.slug || index}
+                key={`leaderboard-${index}-${c.id || c.slug || ''}`}
                 type="button"
                 onClick={() => navigate(`/creator/${encodeURIComponent(c.slug || c.id)}`)}
                 className="flex items-center gap-3 p-4 bg-white rounded-xl shadow-sm border border-gray-100 hover:border-[#FF4654]/30 hover:shadow-md transition-all text-left group"

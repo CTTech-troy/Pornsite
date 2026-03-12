@@ -2,7 +2,10 @@ import React from 'react';
 import { Crown, TrendingUp, Hash } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-const PLACEHOLDER = 'https://via.placeholder.com/100';
+// Inline SVG placeholder to avoid external network requests (prevents 503 errors)
+const PLACEHOLDER = `data:image/svg+xml;utf8,${encodeURIComponent(
+  "<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><rect width='100%' height='100%' fill='%23f3f4f6'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%23999' font-family='Arial' font-size='20'>Avatar</text></svg>"
+)} `;
 
 function parseVideoCount(v) {
   if (v == null) return 0;
@@ -36,11 +39,11 @@ export default function Sidebar({ onCreatorClick }) {
         if (!res.ok) throw new Error(`Failed to fetch pornstars (status ${res.status})`);
         const body = await res.json();
         const data = Array.isArray(body) ? body : (body && body.data ? body.data : []);
-        if (!Array.isArray(data) || data.length === 0) throw new Error('No data');
+        if (!Array.isArray(data)) throw new Error('Invalid response');
 
         // filter out placeholder avatars and parse counts
         const filtered = data
-          .map(p => ({ ...p, __videos: parseVideoCount(p.videos_count_all) }))
+          .map(p => ({ ...p, __videos: parseVideoCount(p.videos_count_all ?? p.videosCount) }))
           .filter(p => p && p.star_thumb && !String(p.star_thumb).includes('pornstars/default'));
 
         // sort by numeric videos desc and take top 5
@@ -52,19 +55,28 @@ export default function Sidebar({ onCreatorClick }) {
         const mapped = top5.map((p, i) => ({
           rank: i + 1,
           name: p.name || p.star_name || 'Unknown',
-          followers: String(p.__videos || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ','),
+          followers: String(p.__videos ?? 0).replace(/\B(?=(\d{3})+(?!\d))/g, ','),
           avatar: p.star_thumb || PLACEHOLDER,
           raw: p
         }));
 
         while (mapped.length < 5) {
           const n = mapped.length + 1;
-          mapped.push({ rank: n, name: 'Unknown', followers: '0', avatar: PLACEHOLDER, raw: null });
+          mapped.push({ rank: n, name: 'No data', followers: '0', avatar: PLACEHOLDER, raw: null });
         }
 
         if (mounted) setTopCreators(mapped);
       } catch (err) {
         console.warn('Sidebar: failed to load top creators:', err && err.message ? err.message : err);
+        if (mounted) {
+          setTopCreators(Array.from({ length: 5 }, (_, i) => ({
+            rank: i + 1,
+            name: 'Unavailable',
+            followers: '0',
+            avatar: PLACEHOLDER,
+            raw: null
+          })));
+        }
       }
     })();
     return () => { mounted = false; };
@@ -93,7 +105,17 @@ export default function Sidebar({ onCreatorClick }) {
                 <img
                   src={creator.avatar}
                   alt={creator.name}
-                  onError={(e)=>{ e.currentTarget.src = PLACEHOLDER; }}
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    try {
+                      console.warn('Sidebar: avatar load failed for', img.src);
+                    } catch (logErr) {
+                      /* ignore logging errors */
+                    }
+                    // prevent infinite loop if the fallback also errors
+                    img.onerror = null;
+                    img.src = PLACEHOLDER;
+                  }}
                   className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm group-hover:scale-110 transition-transform" />
 
                 {creator.rank <= 3 && (

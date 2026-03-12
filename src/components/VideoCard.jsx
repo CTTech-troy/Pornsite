@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Heart, MessageCircle, Eye, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { isDirectStreamUrl } from '../utils/streamUrl';
+import { formatDuration } from '../utils/formatDuration';
 
 const FALLBACK_AVATAR = 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=60&crop=faces&bg=fff';
 const FALLBACK_THUMBNAIL = '/fallback.jpg';
@@ -208,7 +209,7 @@ export default function VideoCard({
 
         {/* Duration Badge */}
         <div className="absolute bottom-1.5 right-1.5 bg-black/70 backdrop-blur-md text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">
-          {duration}
+          {formatDuration(duration ?? durationSeconds) || '0:00'}
         </div>
 
         {/* Preview progress - desktop only when this card is active */}
@@ -247,20 +248,20 @@ export default function VideoCard({
           <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
             <span className="truncate">{channel}</span>
             <span className="w-0.5 h-0.5 bg-gray-300 rounded-full flex-shrink-0"></span>
-            <span className="flex-shrink-0">{time}</span>
+            <span className="flex-shrink-0">{time ?? ''}</span>
           </div>
           <div className="flex items-center gap-3 text-[10px] font-bold text-gray-400">
             <div className="flex items-center gap-0.5">
               <Heart className="w-3 h-3" />
-              <span>{likes}</span>
+              <span>{likes ?? 0}</span>
             </div>
             <div className="flex items-center gap-0.5">
               <MessageCircle className="w-3 h-3" />
-              <span>{comments}</span>
+              <span>{comments ?? 0}</span>
             </div>
             <div className="flex items-center gap-0.5">
               <Eye className="w-3 h-3" />
-              <span>{views}</span>
+              <span>{views ?? 0}</span>
             </div>
           </div>
         </div>
